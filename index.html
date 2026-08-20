@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>shaderBoi</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<div id="vizWrap">
+  <canvas id="glCanvas"></canvas>
+  <canvas id="overlayCanvas"></canvas>
+  <div id="bloomGlow"></div>
+</div>
+
+<div id="stageHint" class="stage-hint hidden">ESC / H — SHOW CONTROLS</div>
+
+<div id="dropHint" class="drop-hint hidden">
+  <div class="drop-hint-inner">
+    <div class="drop-glyph">⇣</div>
+    <div>DROP LOGO / IMAGE</div>
+  </div>
+</div>
+
+<!-- ======= TOP BAR ======= -->
+<header id="topBar">
+  <div class="wordmark">
+    <span class="wordmark-sigil">⌁</span> shader<b>Boi</b>
+  </div>
+  <div class="topbar-center">
+    <span class="active-shader-label">RUNNING</span>
+    <span id="activeShaderName" class="active-shader-name">—</span>
+    <span id="timeReadout" class="time-readout">t 0.0s</span>
+  </div>
+  <div class="topbar-right">
+    <button id="audioBtn" class="tb-btn icon-btn" title="Audio-reactive brightness from microphone">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+        <rect x="9" y="2.5" width="6" height="11" rx="3"/>
+        <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0"/>
+        <line x1="12" y1="18" x2="12" y2="21"/>
+        <line x1="8.5" y1="21" x2="15.5" y2="21"/>
+      </svg><span id="audioBtnLabel">OFF</span>
+    </button>
+    <input type="range" id="audioSens" class="audio-sens hidden" min="1" max="30" value="10" title="Audio sensitivity">
+    <button id="playPauseBtn" class="tb-btn icon-btn" title="Play / pause shader time">
+      <svg id="pauseIcon" class="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <rect x="6" y="4" width="4" height="16"/>
+        <rect x="14" y="4" width="4" height="16"/>
+      </svg>
+      <svg id="playIcon" class="icon hidden" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d="M7 4l13 8-13 8z"/>
+      </svg>
+    </button>
+    <select id="qualitySelect" class="tb-select" title="Render resolution">
+      <option value="0.5">RES ½×</option>
+      <option value="1" selected>RES 1×</option>
+      <option value="dpr">RES HD</option>
+    </select>
+    <button id="saveSceneBtn" class="tb-btn wide" title="Export the whole scene (shader + layers) as a JSON file">SCENE ⇩</button>
+    <button id="loadSceneBtn" class="tb-btn wide" title="Load a scene JSON file">SCENE ⇧</button>
+    <input type="file" id="sceneFileInput" accept=".json,application/json" class="hidden">
+    <button id="stageBtn" class="tb-btn wide stage-btn icon-btn" title="Fullscreen, no UI — for live display">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+        <path d="M4 9V4h5"/>
+        <path d="M15 4h5v5"/>
+        <path d="M20 15v5h-5"/>
+        <path d="M9 20H4v-5"/>
+      </svg><span>STAGE</span>
+    </button>
+  </div>
+</header>
+
+<!-- ======= SHADER LIBRARY (left) ======= -->
+<aside id="libraryPanel" class="panel left">
+  <div class="panel-head">
+    <h2>SHADER LIBRARY</h2>
+    <button class="collapse-btn" data-target="libraryPanel">–</button>
+  </div>
+  <div class="panel-body">
+    <ul id="shaderList" class="shader-list"></ul>
+    <button id="addShaderBtn" class="big-action">+ ADD SHADER</button>
+    <div id="presetSection" class="hidden">
+      <div class="ctl-divider">PRESETS</div>
+      <ul id="presetList" class="shader-list"></ul>
+    </div>
+  </div>
+</aside>
+
+<!-- ======= LAYERS (right) ======= -->
+<aside id="layersPanel" class="panel right">
+  <div class="panel-head">
+    <h2>LOGO LAYERS</h2>
+    <button class="collapse-btn" data-target="layersPanel">–</button>
+  </div>
+  <div class="panel-body">
+    <ul id="layerList" class="layer-list"></ul>
+    <div id="layerEmptyMsg" class="empty-msg">Drag &amp; drop a logo or image<br>anywhere on the canvas.</div>
+
+    <div id="layerControls" class="layer-controls hidden">
+      <div class="ctl-group">
+        <label>OPACITY <span id="opacityVal" class="val">100</span></label>
+        <input type="range" id="opacitySlider" min="5" max="100" value="100">
+      </div>
+      <div class="ctl-group">
+        <label>SCALE <span id="scaleVal" class="val">100</span></label>
+        <input type="range" id="scaleSlider" min="5" max="300" value="100">
+      </div>
+      <div class="ctl-group">
+        <label>SCALE X <span id="scaleXVal" class="val">100</span></label>
+        <input type="range" id="scaleXSlider" min="5" max="300" value="100">
+      </div>
+      <div class="ctl-group">
+        <label>SCALE Y <span id="scaleYVal" class="val">100</span></label>
+        <input type="range" id="scaleYSlider" min="5" max="300" value="100">
+      </div>
+      <div class="ctl-group">
+        <label>ROTATION <span id="rotationVal" class="val">0°</span></label>
+        <input type="range" id="rotationSlider" min="-180" max="180" value="0">
+      </div>
+
+      <div class="ctl-divider">COLOR</div>
+      <div class="ctl-group seg-row">
+        <div class="segmented" id="colorModeSeg">
+          <button data-mode="original" class="on">ORIG</button>
+          <button data-mode="tint">TINT</button>
+          <button data-mode="fill">FILL</button>
+        </div>
+        <input type="color" id="layerColor" value="#ffc46b" title="Layer color">
+      </div>
+      <div class="ctl-group check-row">
+        <label class="chk"><input type="checkbox" id="knockoutChk"> KNOCK OUT WHITE BG</label>
+      </div>
+      <div class="ctl-group" id="knockoutThreshGroup">
+        <label>WHITE THRESHOLD <span id="knockoutVal" class="val">235</span></label>
+        <input type="range" id="knockoutSlider" min="160" max="254" value="235">
+      </div>
+
+      <div class="ctl-divider">OUTLINE</div>
+      <div class="ctl-group seg-row">
+        <div class="grow">
+          <label>WIDTH <span id="outlineVal" class="val">0</span></label>
+          <input type="range" id="outlineSlider" min="0" max="40" value="0">
+        </div>
+        <input type="color" id="outlineColor" value="#0b0e12" title="Outline color">
+      </div>
+
+      <div class="ctl-divider">VECTORIZE</div>
+      <div class="ctl-group">
+        <label>SMOOTHING <span id="smoothVal" class="val">1.5</span></label>
+        <input type="range" id="smoothSlider" min="0" max="40" value="15">
+      </div>
+      <div class="ctl-group btn-row">
+        <button id="traceBtn" class="small-action">TRACE → VECTOR</button>
+        <button id="downloadSvgBtn" class="small-action" disabled>SVG ⇩</button>
+      </div>
+
+      <div class="ctl-group btn-row">
+        <button id="deleteLayerBtn" class="small-action danger">DELETE LAYER</button>
+      </div>
+    </div>
+  </div>
+</aside>
+
+<!-- ======= SHADER EDITOR MODAL ======= -->
+<div id="modalBackdrop" class="modal-backdrop hidden">
+  <div class="modal">
+    <div class="modal-head">
+      <h2 id="modalTitle">ADD SHADER</h2>
+      <button id="modalCloseBtn" class="collapse-btn">✕</button>
+    </div>
+    <input type="text" id="shaderNameInput" placeholder="Shader name" spellcheck="false">
+    <textarea id="shaderCodeInput" placeholder="// Paste Shadertoy code here — needs mainImage(out vec4 fragColor, in vec2 fragCoord)" spellcheck="false"></textarea>
+    <pre id="compileLog" class="compile-log hidden"></pre>
+    <div class="modal-actions">
+      <button id="modalCancelBtn" class="small-action">CANCEL</button>
+      <button id="modalSaveBtn" class="big-action">COMPILE &amp; SAVE</button>
+    </div>
+  </div>
+</div>
+
+<script src="js/shaders.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/shader-engine.js"></script>
+<script src="js/vectorize.js"></script>
+<script src="js/persist.js"></script>
+<script src="js/layers.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

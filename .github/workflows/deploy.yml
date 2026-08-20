@@ -1,0 +1,53 @@
+name: Deploy shaderBoi to GitHub Pages
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # No build step — plain static app. Stamp js/css URLs with the commit SHA
+      # so browsers never serve stale app code after a deploy (serve.py does the
+      # same locally with file mtimes).
+      - name: Stamp asset versions
+        run: |
+          python3 - <<'PY'
+          import re, os
+          sha = os.environ.get('GITHUB_SHA', 'dev')[:12]
+          html = open('index.html').read()
+          html = re.sub(r'(src=")([^":?]+\.js)(")', lambda m: m.group(1) + m.group(2) + '?v=' + sha + m.group(3), html)
+          html = re.sub(r'(href=")([^":?]+\.css)(")', lambda m: m.group(1) + m.group(2) + '?v=' + sha + m.group(3), html)
+          open('index.html', 'w').write(html)
+          PY
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
