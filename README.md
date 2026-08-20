@@ -5,6 +5,15 @@ logos/images on top — drag & drop, recolor, outline, and vectorize to SVG.
 
 ## Run it
 
+**Hosted:** https://thejrummer.art/shaderBoi/ — deployed from this repo by
+`.github/workflows/deploy.yml` on every push to main (GitHub Pages, same pattern as
+patchNet/trussLab). Assets are stamped with the commit SHA at deploy time.
+
+**Desktop:** double-click `ShaderBoi.app` on the Desktop — it starts the local server
+if needed (via `scripts/launch.sh`) and opens the app.
+
+**Manual:**
+
 ```bash
 python3 ~/Documents/shaderdeck/serve.py 8402
 ```
