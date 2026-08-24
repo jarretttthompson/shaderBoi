@@ -56,6 +56,13 @@ server, though any static server technically works.
   save a PNG snapshot of the composition.
 - Space = play/pause shader time, Delete = remove selected layer.
 
+## Show reliability
+
+While the app is open and visible it holds a **screen wake lock** — the display won't
+sleep and the screensaver won't start, so it can run unattended through a show. The lock
+re-acquires automatically if the tab is hidden and shown again. (Requires Chrome/Edge 84+
+or Safari 16.4+; the console logs "screen wake lock active" on success.)
+
 ## Presets
 
 Scene files placed in `presets/` and listed in `presets/index.json` appear under **PRESETS**

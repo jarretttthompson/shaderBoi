@@ -353,6 +353,34 @@
     if (s.on) setAudio(true, { silent: true });
   }
 
+  // ---------- keep the display awake (no screensaver/sleep during shows) ----------
+  let wakeLock = null;
+  async function acquireWakeLock() {
+    if (!('wakeLock' in navigator)) {
+      console.warn('Screen Wake Lock API not supported in this browser — the OS may still blank the screen.');
+      return;
+    }
+    if (wakeLock) return;
+    try {
+      wakeLock = await navigator.wakeLock.request('screen');
+      console.log('shaderBoi: screen wake lock active');
+      // the OS releases the lock when the tab is hidden or the display config
+      // changes — re-acquire as soon as we're visible again
+      wakeLock.addEventListener('release', () => {
+        wakeLock = null;
+        if (document.visibilityState === 'visible') acquireWakeLock();
+      });
+    } catch (err) {
+      wakeLock = null;
+      console.warn('Screen wake lock refused:', err);
+    }
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') acquireWakeLock();
+  });
+  window.addEventListener('focus', acquireWakeLock);
+  acquireWakeLock();
+
   // ---------- stage mode (fullscreen, no UI) ----------
   let cursorTimer = null;
 
