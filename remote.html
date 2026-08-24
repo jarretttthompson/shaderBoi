@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>shaderBoi remote</title>
+<style>
+@font-face {
+  font-family: "Vulf Mono";
+  src: url("fonts/VulfMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+}
+@font-face {
+  font-family: "Vulf Mono";
+  src: url("fonts/VulfMono-Bold.otf") format("opentype");
+  font-weight: 700;
+}
+:root {
+  --ink: #000;
+  --line: rgba(0,255,0,0.42);
+  --line-dim: rgba(0,255,0,0.22);
+  --acc: #00ff00;
+  --acc-soft: rgba(0,255,0,0.12);
+  --text: #00ff00;
+  --text-dim: rgba(0,255,0,0.6);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body {
+  background: var(--ink);
+  color: var(--text);
+  font-family: "Vulf Mono", monospace;
+  height: 100%;
+  user-select: none;
+}
+body {
+  padding: 0.9rem;
+  overflow-y: auto;
+  background-image: repeating-linear-gradient(to bottom,
+    rgba(0,255,0,0.03) 0 1px, transparent 1px 3px);
+}
+h1 {
+  font-size: 0.8rem;
+  letter-spacing: 0.3em;
+  font-weight: 700;
+  margin-bottom: 0.2rem;
+  text-shadow: 0 0 10px rgba(0,255,0,0.45);
+}
+.sub { font-size: 0.6rem; color: var(--text-dim); letter-spacing: 0.14em; margin-bottom: 1rem; }
+.section {
+  font-size: 0.6rem;
+  letter-spacing: 0.3em;
+  font-weight: 700;
+  color: var(--acc);
+  border-top: 1px solid var(--line-dim);
+  padding-top: 0.7rem;
+  margin: 0.9rem 0 0.5rem;
+}
+ul { list-style: none; }
+li {
+  font-size: 0.74rem;
+  padding: 0.55rem 0.6rem;
+  margin-bottom: 0.25rem;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+li:hover { border-color: var(--line-dim); color: var(--text); }
+li.active {
+  color: var(--acc);
+  border-color: var(--line);
+  background: var(--acc-soft);
+}
+li.active::before { content: "\25B8 "; }
+.row { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.6rem; }
+button {
+  font-family: inherit;
+  font-size: 0.68rem;
+  letter-spacing: 0.14em;
+  background: var(--ink);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0.6rem 0.9rem;
+  cursor: pointer;
+  flex: 1;
+}
+button:hover { border-color: var(--acc); background: var(--acc-soft); }
+button.on { background: var(--acc-soft); color: var(--acc); border-color: var(--acc); }
+input[type=range] {
+  flex: 1;
+  appearance: none; -webkit-appearance: none;
+  height: 2px;
+  background: var(--line);
+  cursor: pointer;
+}
+input[type=range]::-webkit-slider-thumb {
+  appearance: none; -webkit-appearance: none;
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: var(--acc);
+  border: 1px solid var(--ink);
+  box-shadow: 0 0 6px rgba(0,255,0,0.5);
+  cursor: grab;
+}
+label { font-size: 0.6rem; letter-spacing: 0.16em; color: var(--text-dim); }
+.val { color: var(--acc); font-size: 0.66rem; min-width: 2ch; text-align: right; }
+#meter {
+  height: 6px;
+  border: 1px solid var(--line-dim);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-top: 0.4rem;
+}
+#meterFill {
+  height: 100%;
+  width: 0%;
+  background: var(--acc);
+  box-shadow: 0 0 8px rgba(0,255,0,0.6);
+  transition: width 0.12s linear;
+}
+#waiting {
+  font-size: 0.66rem;
+  color: var(--text-dim);
+  border: 1px dashed var(--line-dim);
+  border-radius: 4px;
+  padding: 0.9rem;
+  text-align: center;
+  line-height: 1.7;
+}
+.hidden { display: none !important; }
+</style>
+</head>
+<body>
+<h1>SHADERBOI REMOTE</h1>
+<div class="sub">CONTROLS THE MAIN WINDOW</div>
+
+<div id="waiting">Waiting for the shaderBoi window&hellip;<br>Keep it open in this browser.</div>
+
+<div id="panel" class="hidden">
+  <div class="row">
+    <button id="playBtn">PAUSE</button>
+    <button id="stageToggleBtn">STAGE OFF</button>
+  </div>
+
+  <div class="section">SHADERS</div>
+  <ul id="shaders"></ul>
+
+  <div class="section">PRESETS</div>
+  <ul id="presets"></ul>
+
+  <div class="section">AUDIO REACT</div>
+  <div class="row"><button id="audioBtn">MIC OFF</button></div>
+  <div class="row">
+    <label>SENS</label>
+    <input type="range" id="sens" min="1" max="30" value="10">
+    <span class="val" id="sensVal">10</span>
+  </div>
+  <div id="meter"><div id="meterFill"></div></div>
+</div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const ch = new BroadcastChannel('shaderboi-ctl');
+  let state = null;
+  let sensDragging = false;
+
+  const send = (msg) => ch.postMessage(msg);
+
+  function render() {
+    if (!state) return;
+    $('waiting').classList.add('hidden');
+    $('panel').classList.remove('hidden');
+
+    $('playBtn').textContent = state.playing ? 'PAUSE' : 'PLAY';
+    $('stageToggleBtn').textContent = state.stage ? 'STAGE ON' : 'STAGE OFF';
+    $('stageToggleBtn').classList.toggle('on', state.stage);
+    $('audioBtn').textContent = state.audio.on ? 'MIC LIVE' : 'MIC OFF';
+    $('audioBtn').classList.toggle('on', state.audio.on);
+    if (!sensDragging) {
+      $('sens').value = state.audio.sens;
+      $('sensVal').textContent = state.audio.sens;
+    }
+
+    const ul = $('shaders');
+    ul.innerHTML = '';
+    for (const s of state.shaders) {
+      const li = document.createElement('li');
+      li.textContent = s.name;
+      li.className = s.id === state.activeId ? 'active' : '';
+      li.addEventListener('click', () => send({ cmd: 'setShader', id: s.id }));
+      ul.appendChild(li);
+    }
+
+    const pl = $('presets');
+    pl.innerHTML = '';
+    for (const p of state.presets) {
+      const li = document.createElement('li');
+      li.textContent = p.name;
+      li.addEventListener('click', () => send({ cmd: 'preset', file: p.file }));
+      pl.appendChild(li);
+    }
+  }
+
+  ch.onmessage = (e) => {
+    const m = e.data || {};
+    if (m.type === 'state') { state = m; render(); }
+    if (m.type === 'level') $('meterFill').style.width = Math.round(m.v * 100) + '%';
+  };
+
+  $('playBtn').addEventListener('click', () => send({ cmd: 'playpause' }));
+  $('stageToggleBtn').addEventListener('click', () => send({ cmd: 'stage', on: !(state && state.stage) }));
+  $('audioBtn').addEventListener('click', () => send({ cmd: 'audio', on: !(state && state.audio.on) }));
+  $('sens').addEventListener('pointerdown', () => { sensDragging = true; });
+  $('sens').addEventListener('pointerup', () => { sensDragging = false; });
+  $('sens').addEventListener('input', () => {
+    $('sensVal').textContent = $('sens').value;
+    send({ cmd: 'sens', value: parseInt($('sens').value, 10) });
+  });
+
+  // announce until the main window responds, then keep a slow heartbeat
+  send({ cmd: 'hello' });
+  const helloTimer = setInterval(() => {
+    send({ cmd: 'hello' });
+    if (state) clearInterval(helloTimer);
+  }, 1500);
+})();
+</script>
+</body>
+</html>

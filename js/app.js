@@ -38,6 +38,7 @@
     localStorage.setItem(LS_ACTIVE, id);
     $('activeShaderName').textContent = sh.name;
     renderShaderList();
+    broadcastState();
     return true;
   }
 
@@ -130,6 +131,7 @@
     const playing = engine.togglePlay();
     $('pauseIcon').classList.toggle('hidden', !playing);
     $('playIcon').classList.toggle('hidden', playing);
+    broadcastState();
   });
 
   $('qualitySelect').addEventListener('change', (e) => engine.setResolutionScale(e.target.value));
@@ -270,6 +272,8 @@
 
   // ---------- presets ----------
 
+  let presetsCache = [];
+
   async function loadPresets() {
     let list;
     try {
@@ -299,6 +303,8 @@
       ul.appendChild(li);
     }
     $('presetSection').classList.remove('hidden');
+    presetsCache = list.map(p => ({ name: p.name, file: p.file }));
+    broadcastState();
     return list;
   }
 
@@ -317,6 +323,7 @@
     $('audioBtnLabel').textContent = audio.enabled ? 'LIVE' : 'OFF';
     $('audioBtn').classList.toggle('live', audio.enabled);
     $('audioSens').classList.toggle('hidden', !audio.enabled);
+    broadcastState();
   }
 
   async function setAudio(on, opts = {}) {
@@ -404,6 +411,7 @@
       clearTimeout(cursorTimer);
       if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
     }
+    broadcastState();
   }
 
   const inStage = () => document.body.classList.contains('stage');
@@ -418,12 +426,83 @@
 
   window.addEventListener('pointermove', () => { if (inStage()) armCursorHide(); });
 
-  $('stageBtn').addEventListener('click', () => setStage(true));
+  $('stageBtn').addEventListener('click', () => {
+    setStage(true);
+    openRemote();   // pop-out controls so the TV wall stays clean
+  });
 
   // leaving browser fullscreen (Esc) also leaves stage mode
   document.addEventListener('fullscreenchange', () => {
     if (!document.fullscreenElement && inStage()) setStage(false);
   });
+
+  // ---------- pop-out remote control (BroadcastChannel) ----------
+  let remoteWin = null;
+  function openRemote() {
+    if (remoteWin && !remoteWin.closed) { remoteWin.focus(); return; }
+    remoteWin = window.open('remote.html', 'shaderboiRemote',
+      'width=380,height=720,resizable=yes');
+    if (!remoteWin) console.warn('shaderBoi: popup blocked — allow popups for this site to use the stage remote.');
+  }
+
+  const ctlChannel = new BroadcastChannel('shaderboi-ctl');
+
+  function broadcastState() {
+    ctlChannel.postMessage({
+      type: 'state',
+      shaders: allShaders().map(s => ({ id: s.id, name: s.name })),
+      activeId,
+      presets: presetsCache,
+      playing: engine.playing,
+      stage: inStage(),
+      audio: { on: audio.enabled, sens: parseInt($('audioSens').value, 10) },
+    });
+  }
+
+  ctlChannel.onmessage = async (e) => {
+    const m = e.data || {};
+    switch (m.cmd) {
+      case 'hello':
+        broadcastState();
+        break;
+      case 'setShader':
+        activateShader(m.id);
+        break;
+      case 'preset': {
+        try {
+          const res = await fetch('presets/' + m.file, { cache: 'no-store' });
+          await importScene(await res.json(), { confirmReplace: false });
+        } catch (err) { console.warn('Remote preset load failed', err); }
+        broadcastState();
+        break;
+      }
+      case 'playpause':
+        $('playPauseBtn').click();
+        break;
+      case 'audio':
+        await setAudio(m.on);
+        break;
+      case 'sens':
+        $('audioSens').value = m.value;
+        audio.sensitivity = m.value / 2;
+        saveAudioSettings(audio.enabled);
+        broadcastState();
+        break;
+      case 'stage':
+        setStage(m.on);
+        break;
+    }
+  };
+
+  // stream the mic level to the remote's meter (throttled)
+  let lastLevelSent = 0;
+  audio.onLevel = (v) => {
+    const now = performance.now();
+    if (now - lastLevelSent > 150) {
+      lastLevelSent = now;
+      ctlChannel.postMessage({ type: 'level', v: Math.min(1, v) });
+    }
+  };
 
   // ---------- panel collapse ----------
   document.querySelectorAll('.collapse-btn[data-target]').forEach(btn => {

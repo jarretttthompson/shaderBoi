@@ -56,6 +56,15 @@ server, though any static server technically works.
   save a PNG snapshot of the composition.
 - Space = play/pause shader time, Delete = remove selected layer.
 
+## Stage remote
+
+Entering STAGE mode pops out a small **remote control window** (`remote.html`) so the TV
+wall stays clean: switch shaders, load presets, play/pause, toggle the mic, and set audio
+sensitivity from the popup, with a live mic level meter. It syncs both ways over a
+BroadcastChannel — changes made in either window show in both. Requirements: the popup
+must be allowed (the browser may block it the first time), and both windows must be in
+the same browser profile. Open `remote.html` directly any time for a second controller.
+
 ## Show reliability
 
 While the app is open and visible it holds a **screen wake lock** — the display won't
