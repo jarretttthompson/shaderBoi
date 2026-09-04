@@ -105,20 +105,56 @@ input[type=range]::-webkit-slider-thumb {
 }
 label { font-size: 0.6rem; letter-spacing: 0.16em; color: var(--text-dim); }
 .val { color: var(--acc); font-size: 0.66rem; min-width: 2ch; text-align: right; }
-#meter {
+.mrow { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.35rem; }
+.mrow label { width: 3.6em; flex: none; }
+.meter {
+  flex: 1;
   height: 6px;
   border: 1px solid var(--line-dim);
   border-radius: 3px;
   overflow: hidden;
-  margin-top: 0.4rem;
 }
-#meterFill {
+.meter-fill {
   height: 100%;
   width: 0%;
   background: var(--acc);
   box-shadow: 0 0 8px rgba(0,255,0,0.6);
-  transition: width 0.12s linear;
+  transition: width 0.08s linear;
 }
+.meter-fill.dim { background: var(--line); box-shadow: none; transition: width 0.25s linear; }
+.clip {
+  font-size: 0.56rem; letter-spacing: 0.2em;
+  padding: 0.2rem 0.5rem;
+  border: 1px solid var(--line-dim); border-radius: 3px;
+  color: var(--text-dim); opacity: 0.35;
+}
+.clip.hit { opacity: 1; color: var(--ink); background: var(--acc); border-color: var(--acc); box-shadow: 0 0 10px var(--acc); }
+button.recording { color: var(--acc); border-color: var(--acc); background: var(--acc-soft); }
+.beat-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  transition: background 0.05s, box-shadow 0.05s;
+}
+.beat-dot.hit { background: var(--acc); box-shadow: 0 0 10px var(--acc); }
+.fx-list { display: flex; flex-direction: column; gap: 0.35rem; margin: 0.4rem 0 0.6rem; }
+.fx-head {
+  font-size: 0.54rem; letter-spacing: 0.26em; color: var(--text-dim);
+  margin-top: 0.3rem; padding-top: 0.3rem; border-top: 1px dashed var(--line-dim);
+}
+.fx-head:first-child { margin-top: 0; padding-top: 0; border-top: none; }
+.fx-row { display: flex; align-items: center; gap: 0.5rem; }
+.chk {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: 0.45rem;
+  font-size: 0.64rem; letter-spacing: 0.1em; color: var(--acc); cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.fx-row.off .chk { color: var(--text-dim); }
+.chk input { accent-color: var(--acc); margin: 0; }
+.fx-row input[type=range] { flex: none; width: 90px; }
+.fx-row .val { width: 3.4em; }
+.fx-row.off input[type=range], .fx-row.off .val { opacity: 0.35; }
 #waiting {
   font-size: 0.66rem;
   color: var(--text-dim);
@@ -156,7 +192,28 @@ label { font-size: 0.6rem; letter-spacing: 0.16em; color: var(--text-dim); }
     <input type="range" id="sens" min="1" max="30" value="10">
     <span class="val" id="sensVal">10</span>
   </div>
-  <div id="meter"><div id="meterFill"></div></div>
+  <div class="row" title="How much reactions duck when it sounds like talking, not music">
+    <label>FOCUS</label>
+    <input type="range" id="focus" min="0" max="100" value="70">
+    <span class="val" id="focusVal">70</span>
+  </div>
+  <div class="mrow"><label>MUSIC</label><div class="meter"><div class="meter-fill dim" id="mMusic"></div></div></div>
+  <div class="row" style="margin-top:0.6rem">
+    <button id="adaptBtn" title="Normalise to the room's loudness and remove the crowd-noise floor">ADAPT ON</button>
+    <button id="recordBtn" title="Record 45s of the mic + analysis log to the main window's downloads, for tuning">RECORD 45s</button>
+  </div>
+  <div class="row"><span id="clipBadge" class="clip">CLIP</span></div>
+  <div class="section">EFFECTS — ON / STRENGTH</div>
+  <div class="fx-list" id="fxGrid"></div>
+  <div class="row">
+    <button id="fxNoneBtn">NONE</button>
+    <button id="fxDefaultsBtn">DEFAULTS</button>
+  </div>
+  <div class="mrow"><label>LEVEL</label><div class="meter"><div class="meter-fill" id="mLevel"></div></div></div>
+  <div class="mrow"><label>BASS</label><div class="meter"><div class="meter-fill" id="mBass"></div></div></div>
+  <div class="mrow"><label>MID</label><div class="meter"><div class="meter-fill" id="mMid"></div></div></div>
+  <div class="mrow"><label>TREB</label><div class="meter"><div class="meter-fill" id="mTreb"></div></div></div>
+  <div class="mrow"><label>BEAT</label><div class="beat-dot" id="beatDot"></div></div>
 </div>
 
 <script>
@@ -165,6 +222,7 @@ label { font-size: 0.6rem; letter-spacing: 0.16em; color: var(--text-dim); }
   const ch = new BroadcastChannel('shaderboi-ctl');
   let state = null;
   let sensDragging = false;
+  let focusDragging = false;
 
   const send = (msg) => ch.postMessage(msg);
 
@@ -182,6 +240,16 @@ label { font-size: 0.6rem; letter-spacing: 0.16em; color: var(--text-dim); }
       $('sens').value = state.audio.sens;
       $('sensVal').textContent = state.audio.sens;
     }
+    if (!focusDragging && Number.isFinite(state.audio.focus)) {
+      $('focus').value = state.audio.focus;
+      $('focusVal').textContent = state.audio.focus;
+    }
+    $('adaptBtn').textContent = state.audio.adapt === false ? 'ADAPT OFF' : 'ADAPT ON';
+    $('adaptBtn').classList.toggle('on', state.audio.adapt !== false);
+    $('recordBtn').textContent = state.audio.recording ? 'RECORDING… STOP' : 'RECORD 45s';
+    $('recordBtn').classList.toggle('recording', !!state.audio.recording);
+    $('recordBtn').disabled = !(state.audio.on && state.audio.source === 'mic');
+    renderFx(state);
 
     const ul = $('shaders');
     ul.innerHTML = '';
@@ -203,11 +271,91 @@ label { font-size: 0.6rem; letter-spacing: 0.16em; color: var(--text-dim); }
     }
   }
 
+  // effect rows are built once per definition set and then updated in place, so a
+  // slider being dragged isn't rebuilt under the pointer by the echoed state
+  let fxSig = '';
+  let amtDragging = null;
+  function renderFx(state) {
+    const defs = state.fxDefs || [];
+    const fx = state.audio.fx || {};
+    const amt = state.audio.amt || {};
+    const grid = $('fxGrid');
+    const sig = defs.map(d => d.key).join(',');
+    if (sig !== fxSig) {
+      fxSig = sig;
+      grid.innerHTML = '';
+      let group = null;
+      for (const d of defs) {
+        if (d.group !== group) {
+          group = d.group;
+          const h = document.createElement('div');
+          h.className = 'fx-head';
+          h.textContent = group;
+          grid.appendChild(h);
+        }
+        const row = document.createElement('div');
+        row.className = 'fx-row';
+        row.dataset.fx = d.key;
+        const lab = document.createElement('label');
+        lab.className = 'chk';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.addEventListener('change', () => send({ cmd: 'fx', key: d.key, on: cb.checked }));
+        lab.appendChild(cb);
+        lab.appendChild(document.createTextNode(' ' + d.label));
+        const sl = document.createElement('input');
+        sl.type = 'range'; sl.min = 0; sl.max = 200; sl.step = 1;
+        sl.addEventListener('pointerdown', () => { amtDragging = d.key; });
+        sl.addEventListener('pointerup', () => { amtDragging = null; });
+        sl.addEventListener('input', () => {
+          row.querySelector('.val').textContent = sl.value + '%';
+          send({ cmd: 'amt', key: d.key, value: sl.value / 100 });
+        });
+        const val = document.createElement('span');
+        val.className = 'val';
+        row.appendChild(lab); row.appendChild(sl); row.appendChild(val);
+        grid.appendChild(row);
+      }
+    }
+    grid.querySelectorAll('.fx-row').forEach(row => {
+      const key = row.dataset.fx;
+      row.classList.toggle('off', !fx[key]);
+      row.querySelector('input[type=checkbox]').checked = !!fx[key];
+      if (amtDragging !== key) {
+        const pct = Math.round((amt[key] ?? 1) * 100);
+        row.querySelector('input[type=range]').value = pct;
+        row.querySelector('.val').textContent = pct + '%';
+      }
+    });
+  }
+
   ch.onmessage = (e) => {
     const m = e.data || {};
     if (m.type === 'state') { state = m; render(); }
-    if (m.type === 'level') $('meterFill').style.width = Math.round(m.v * 100) + '%';
+    if (m.type === 'level') {
+      const pct = (v) => Math.round(Math.min(1, Math.max(0, v || 0)) * 100) + '%';
+      $('mLevel').style.width = pct(m.v);
+      $('mBass').style.width = pct(m.b);
+      $('mMid').style.width = pct(m.m);
+      $('mTreb').style.width = pct(m.t);
+      $('beatDot').classList.toggle('hit', (m.beat || 0) > 0.5);
+      $('mMusic').style.width = pct(m.music);
+      $('clipBadge').classList.toggle('hit', !!m.clip);
+    }
   };
+
+  $('adaptBtn').addEventListener('click', () => send({ cmd: 'adapt', on: !(state && state.audio.adapt !== false) }));
+  $('recordBtn').addEventListener('click', () => send({ cmd: 'record' }));
+
+  $('focus').addEventListener('pointerdown', () => { focusDragging = true; });
+  $('focus').addEventListener('pointerup', () => { focusDragging = false; });
+  $('focus').addEventListener('input', () => {
+    $('focusVal').textContent = $('focus').value;
+    send({ cmd: 'focus', value: parseInt($('focus').value, 10) });
+  });
+
+  $('fxNoneBtn').addEventListener('click', () => send({ cmd: 'fxAll', defaults: false }));
+  $('fxDefaultsBtn').addEventListener('click', () => send({ cmd: 'fxAll', defaults: true }));
 
   $('playBtn').addEventListener('click', () => send({ cmd: 'playpause' }));
   $('stageToggleBtn').addEventListener('click', () => send({ cmd: 'stage', on: !(state && state.stage) }));

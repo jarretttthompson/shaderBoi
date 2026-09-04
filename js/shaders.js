@@ -675,5 +675,76 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord){
   col *= 1.0 - 0.42*dot(uv, uv);
   fragColor = vec4(col, 1.0);
 }`
+},
+{
+  id: 'builtin-amber-pulse',
+  name: 'Amber Pulse',
+  builtin: true,
+  code: `// Amber Pulse — audio-reactive. Spectrum rings ripple out from a bass-driven ember core,
+// beats flash the rim, treble sparks the smoke. With the mic off it idles on a slow breath.
+// Inputs: iAudio (512x2 spectrum/waveform), iAudioLevel, iBass, iMid, iTreble, iBeat.
+float h21(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+
+float vnoise(vec2 p){
+  vec2 i = floor(p), f = fract(p);
+  f = f*f*(3.0-2.0*f);
+  return mix(mix(h21(i), h21(i+vec2(1,0)), f.x),
+             mix(h21(i+vec2(0,1)), h21(i+vec2(1,1)), f.x), f.y);
+}
+
+float fbm(vec2 p){
+  float v = 0.0, a = 0.5;
+  for (int i = 0; i < 5; i++){ v += a*vnoise(p); p = p*2.03 + vec2(1.7, 9.2); a *= 0.5; }
+  return v;
+}
+
+void mainImage(out vec4 fragColor, in vec2 fragCoord){
+  vec2 uv = (fragCoord - 0.5*iResolution.xy) / iResolution.y;
+  float t = iTime*0.25;
+
+  // blend between an idle breath and the live signal
+  float live = clamp(iAudioLevel*3.0, 0.0, 1.0);
+  float idle = 0.5 + 0.5*sin(iTime*0.8);
+  float bass = mix(idle*0.35, iBass, live);
+  float treb = mix(0.0, iTreble, live);
+
+  float r = length(uv);
+
+  // slow amber smoke, swirled by its own noise field
+  vec2 sw = uv * (2.2 - 0.4*bass);
+  float ang = fbm(sw*1.5 + t) * 6.2831;
+  sw += 0.25*vec2(cos(ang), sin(ang));
+  float smoke = fbm(sw*2.0 - vec2(t*0.6, t*0.2));
+
+  // spectrum rings: radius maps to frequency, bins light their ring
+  float fq = clamp(r*0.9, 0.0, 1.0);
+  float spec = texture(iAudio, vec2(fq, 0.25)).x;
+  spec = mix(0.15*idle*(1.0-fq), spec, live);
+  float rings = 0.5 + 0.5*sin(r*40.0 - iTime*2.0 + spec*6.0);
+  rings = pow(rings, 6.0) * spec * 1.6;
+
+  // ember core swells with the bass
+  float core = exp(-r*r*(6.0 - 3.0*bass)) * (0.6 + 0.9*bass);
+
+  // beat flash on the rim
+  float rim = smoothstep(0.55, 0.9, r) * (1.0 - smoothstep(0.9, 1.3, r)) * iBeat * 0.8;
+
+  // treble sparks in the smoke
+  float sparks = pow(vnoise(uv*60.0 + vec2(iTime*3.0, -iTime*2.0)), 9.0) * treb * 1.5;
+
+  vec3 amber = vec3(1.00, 0.55, 0.16);
+  vec3 ember = vec3(0.55, 0.14, 0.03);
+  vec3 cream = vec3(1.00, 0.90, 0.70);
+
+  vec3 col = ember * (0.25 + 0.75*smoke);
+  col += amber * core * (0.7 + 0.6*smoke);
+  col += cream * rings;
+  col += amber * rim;
+  col += cream * sparks * smoke;
+
+  col *= 1.0 - 0.45*smoothstep(0.6, 1.4, r);
+  col = pow(col, vec3(0.9));
+  fragColor = vec4(col, 1.0);
+}`
 }
 ];

@@ -9,9 +9,13 @@
 <body>
 
 <div id="vizWrap">
-  <canvas id="glCanvas"></canvas>
+  <!-- color effects (brightness, contrast, hue, bloom) apply to the shader only;
+       logo layers on the overlay canvas stay untouched. Zoom / shake move the whole wrap. -->
+  <div id="shaderWrap">
+    <canvas id="glCanvas"></canvas>
+    <div id="bloomGlow"></div>
+  </div>
   <canvas id="overlayCanvas"></canvas>
-  <div id="bloomGlow"></div>
 </div>
 
 <div id="stageHint" class="stage-hint hidden">ESC / H — SHOW CONTROLS</div>
@@ -83,6 +87,55 @@
     <div id="presetSection" class="hidden">
       <div class="ctl-divider">PRESETS</div>
       <ul id="presetList" class="shader-list"></ul>
+    </div>
+
+    <div id="audioSection">
+      <div class="ctl-divider">AUDIO REACT</div>
+      <div class="ctl-group">
+        <button id="audioToggleBtn" class="small-action full" title="Listen to the microphone / line input">MIC OFF</button>
+      </div>
+      <div class="ctl-group">
+        <label>INPUT</label>
+        <select id="audioDevice" class="full-select" title="Audio input device, or an audio file to tune against">
+          <option value="">DEFAULT INPUT</option>
+          <option value="__file">AUDIO FILE…</option>
+        </select>
+        <input type="file" id="audioFileInput" accept="audio/*,.webm,.m4a,.mp3,.wav,.ogg" class="hidden">
+      </div>
+      <div class="ctl-group check-row" title="Normalise loudness to the loudest recent passage and remove the steady crowd-noise floor, so the same settings work at soundcheck and in a packed room">
+        <label class="chk"><input type="checkbox" id="adaptChk" checked> ROOM ADAPT</label>
+        <span id="clipBadge" class="clip-badge" title="The input is hitting the converter ceiling. Lower the input volume in System Settings → Sound → Input, or move the Mac further from the speakers.">CLIP</span>
+      </div>
+      <div class="ctl-group">
+        <label>SENSITIVITY <span id="audioSensVal" class="val">10</span></label>
+        <input type="range" id="audioSensPanel" min="1" max="30" value="10">
+      </div>
+      <div class="ctl-group" title="How much the reactions duck when the input sounds like talking rather than music. 0 reacts to everything; 100 reacts to music only.">
+        <label>MUSIC FOCUS <span id="focusVal" class="val">70</span></label>
+        <input type="range" id="focusSlider" min="0" max="100" value="70">
+      </div>
+      <div class="ctl-group meters">
+        <div class="meter-row"><span>LEVEL</span><div class="meter"><div class="meter-fill" id="mLevel"></div></div></div>
+        <div class="meter-row"><span>BASS</span><div class="meter"><div class="meter-fill" id="mBass"></div></div></div>
+        <div class="meter-row"><span>MID</span><div class="meter"><div class="meter-fill" id="mMid"></div></div></div>
+        <div class="meter-row"><span>TREB</span><div class="meter"><div class="meter-fill" id="mTreb"></div></div></div>
+        <div class="meter-row"><span>BEAT</span><div class="beat-track"><div class="beat-dot" id="beatDot"></div></div></div>
+        <div class="meter-row" title="Music detector confidence: full = music, empty = speech / noise"><span>MUSIC</span><div class="meter"><div class="meter-fill dim" id="mMusic"></div></div></div>
+      </div>
+      <div class="ctl-group">
+        <label>EFFECTS <span class="val">ON / STRENGTH</span></label>
+        <div class="fx-list" id="audioFx"></div>
+      </div>
+      <div class="ctl-group btn-row">
+        <button id="fxNoneBtn" class="small-action" title="Turn every effect off">NONE</button>
+        <button id="fxDefaultsBtn" class="small-action" title="Back to the default set">DEFAULTS</button>
+      </div>
+      <div class="ctl-divider">TUNING</div>
+      <div class="ctl-group btn-row">
+        <button id="recordBtn" class="small-action" title="Record 45 seconds of the mic plus the analysis log, then download both — send them back to tune the detector for this room">RECORD 45s</button>
+      </div>
+      <div id="recordStatus" class="hint hidden"></div>
+      <div class="hint">Shaders always get <b>iAudio</b>, <b>iAudioLevel</b>, <b>iBass</b>, <b>iMid</b>, <b>iTreble</b>, <b>iBeat</b>. Try Amber Pulse.</div>
     </div>
   </div>
 </aside>

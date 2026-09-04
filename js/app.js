@@ -137,12 +137,107 @@
   $('qualitySelect').addEventListener('change', (e) => engine.setResolutionScale(e.target.value));
 
   let lastReadout = 0;
+  let lastGlow = '';
+  let overlayAnimating = false;
+  let seenBeat = 0, beatT0 = 0, beatStrength = 1, shakeAng = 0;
+  const snapZero = (v) => (Math.abs(v) < 5e-4 ? 0 : v);
   engine.onTick = (t) => {
     const now = performance.now();
     if (now - lastReadout > 200) {
       lastReadout = now;
       $('timeReadout').textContent = 't ' + t.toFixed(1) + 's';
     }
+
+    // audio-driven shader / logo / overlay effects, evaluated per frame so they stay
+    // in step with the render (composite CSS effects are applied inside AudioReactive)
+    const live = audio.enabled;
+    const k = (key) => (live ? audio.k(key) : 0);
+    engine.timeScale = 1 + audio.level * 1.6 * k('speed');
+    layerMgr.pulse = snapZero((audio.beat * 0.06 + audio.level * 0.025) * k('pulse'));
+    layerMgr.wobble = snapZero(Math.sin(now / 1000 * 3.1) * audio.bass * 3.5 * k('wobble'));
+
+    // beat zoom + shake: envelope restarts on every detected onset, decays over ~0.6s.
+    // Animated here (per frame) rather than in the 30 Hz analyser loop so it's smooth.
+    if (audio.beatCount !== seenBeat) {
+      seenBeat = audio.beatCount;
+      beatT0 = now;
+      beatStrength = Math.min(1, 0.45 + audio.bass * 0.8);   // bigger hits knock harder
+      shakeAng = Math.random() * Math.PI * 2;
+    }
+    const kz = k('zoom'), ks = k('shake');
+    if (kz || ks) {
+      const age = beatT0 ? (now - beatT0) / 1000 : 99;
+      const env = Math.exp(-age / 0.24) * beatStrength;
+      let zoom = 1 + (env * 0.07 + audio.level * 0.012) * kz;
+      let sx = 0, sy = 0;
+      if (ks && env > 0.004) {
+        // damped knock along a random direction with a faster cross-axis wobble
+        const amp = 18 * ks * env;
+        const knock = Math.cos(age * 2 * Math.PI * 7.5);
+        const cross = Math.sin(age * 2 * Math.PI * 11.5) * 0.35;
+        sx = amp * (Math.cos(shakeAng) * knock - Math.sin(shakeAng) * cross);
+        sy = amp * (Math.sin(shakeAng) * knock + Math.cos(shakeAng) * cross);
+      }
+      audio.applyTransform(zoom, sx, sy);
+    } else {
+      audio.applyTransform(1, 0, 0);
+    }
+
+    const glowPx = (audio.beat * 22 + audio.level * 8) * k('glow');
+    const glow = glowPx > 0.3 ? `drop-shadow(0 0 ${glowPx.toFixed(1)}px rgba(255, 225, 170, 0.9))` : '';
+    if (glow !== lastGlow) {
+      lastGlow = glow;
+      $('overlayCanvas').style.filter = glow;
+    }
+
+    const overlaysOn = !!(k('eq') || k('wave'));
+    const animating = !!(layerMgr.pulse || layerMgr.wobble || overlaysOn);
+    // render while anything moves, plus one more frame to clear when it stops
+    if (animating || overlayAnimating) layerMgr.render();
+    overlayAnimating = animating;
+  };
+
+  // ---------- audio overlays (drawn under the logos) ----------
+  function drawEqBars(ctx) {
+    const W = window.innerWidth, H = window.innerHeight;
+    const N = 36, spec = audio.spectrum;
+    const slot = W / (N * 2), barW = slot * 0.62, maxH = H * 0.22 * audio.k('eq');
+    const g = ctx.createLinearGradient(0, H, 0, H - maxH);
+    g.addColorStop(0, 'rgba(255, 225, 170, 0.12)');
+    g.addColorStop(1, 'rgba(255, 240, 210, 0.7)');
+    ctx.fillStyle = g;
+    for (let i = 0; i < N; i++) {
+      // log-ish bin spacing: low bars = bass, high bars = treble; peak over the bin span
+      const b0 = Math.min(511, Math.floor(Math.pow(i / N, 1.8) * 380) + 1);
+      const b1 = Math.min(512, Math.floor(Math.pow((i + 1) / N, 1.8) * 380) + 2);
+      let v = 0;
+      for (let k = b0; k < b1; k++) if (spec[k] > v) v = spec[k];
+      const h = Math.pow(v / 255, 1.3) * maxH;
+      if (h < 1) continue;
+      ctx.fillRect(W / 2 + i * slot + (slot - barW) / 2, H - h, barW, h);
+      ctx.fillRect(W / 2 - (i + 1) * slot + (slot - barW) / 2, H - h, barW, h);
+    }
+  }
+
+  function drawWaveform(ctx) {
+    const W = window.innerWidth, H = window.innerHeight;
+    const wave = audio.wave, amp = H * 0.12 * (0.6 + 0.8 * audio.level) * audio.k('wave');
+    ctx.beginPath();
+    for (let i = 0; i < 512; i++) {
+      const x = (i / 511) * W;
+      const y = H * 0.5 + (wave[i] / 255 - 0.5) * 2 * amp;
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.strokeStyle = 'rgba(255, 240, 210, 0.55)';
+    ctx.lineWidth = 1.5;
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+  }
+
+  layerMgr.preDraw = (ctx) => {
+    if (!audio.enabled) return;
+    if (audio.k('eq')) drawEqBars(ctx);
+    if (audio.k('wave')) drawWaveform(ctx);
   };
 
   function exportPng() {
@@ -180,7 +275,7 @@
       const image = l._blob ? await blobToDataURL(l._blob) : l.src.toDataURL('image/png');
       layers.push({
         name: l.name, image,
-        xf: l.x / window.innerWidth, yf: l.y / window.innerHeight,
+        xf: l.xf, yf: l.yf,
         scale: l.scale, scaleX: l.scaleX ?? 1, scaleY: l.scaleY ?? 1,
         rotation: l.rotation, opacity: l.opacity,
         colorMode: l.colorMode, color: l.color,
@@ -193,7 +288,11 @@
       app: 'shaderdeck-scene',
       version: 1,
       shader: sh ? { name: sh.name, code: sh.code } : null,
-      audio: audioSettings(),
+      audio: {
+        sens: parseInt($('audioSens').value, 10),
+        fx: { ...audio.fx }, amt: { ...audio.amt },
+        focus: Math.round(audio.musicFocus * 100),
+      },
       layers,
     };
   }
@@ -236,8 +335,8 @@
         const bmp = await createImageBitmap(blob);
         const layer = layerMgr.addImage(bmp, rec.name);
         Object.assign(layer, {
-          x: rec.xf * window.innerWidth,
-          y: rec.yf * window.innerHeight,
+          xf: Number.isFinite(rec.xf) ? rec.xf : 0.5,
+          yf: Number.isFinite(rec.yf) ? rec.yf : 0.5,
           scale: rec.scale, scaleX: rec.scaleX ?? 1, scaleY: rec.scaleY ?? 1,
           rotation: rec.rotation, opacity: rec.opacity,
           colorMode: rec.colorMode, color: rec.color,
@@ -251,9 +350,12 @@
         console.warn('Failed to import layer', rec && rec.name, err);
       }
     }
-    if (scene.audio && scene.audio.sens) {
-      $('audioSens').value = scene.audio.sens;
-      audio.sensitivity = scene.audio.sens / 2;
+    if (scene.audio) {
+      if (scene.audio.sens) applySens(scene.audio.sens);
+      applyFxSettings(scene.audio);
+      audio._applyComposite();
+      saveAudioSettings(audio.enabled);
+      syncAudioUI();
     }
     layerMgr.select(null);
     layerMgr.persistSoon();
@@ -308,29 +410,295 @@
     return list;
   }
 
-  // ---------- audio-reactive brightness/bloom ----------
-  const audio = new AudioReactive($('vizWrap'), $('bloomGlow'));
+  // ---------- audio react: mic → brightness/bloom, shader uniforms, time warp, logo pulse ----------
+  const audio = new AudioReactive({
+    filterEl: $('shaderWrap'),      // color effects: shader only, logos stay clean
+    transformEl: $('vizWrap'),      // zoom / shake: whole picture
+    glowEl: $('bloomGlow'),
+  });
   window.audioReact = audio;
+  engine.setAudio(audio);
   const LS_AUDIO = 'shaderdeck.audio';
+  const FX_DEFS = AudioReactive.FX;
+  const FX_KEYS = FX_DEFS.map(d => d.key);
+
+  // one row per effect: on/off checkbox + strength slider (0–200%, 100 = designed amount)
+  const AMT_MAX = 200;
+  const amtPct = (key) => Math.round((audio.amt[key] ?? 1) * 100);
+
+  function renderFxList() {
+    const root = $('audioFx');
+    root.innerHTML = '';
+    let group = null;
+    for (const d of FX_DEFS) {
+      if (d.group !== group) {
+        group = d.group;
+        const h = document.createElement('div');
+        h.className = 'fx-head';
+        h.textContent = group;
+        root.appendChild(h);
+      }
+      const row = document.createElement('div');
+      row.className = 'fx-row';
+      row.dataset.fx = d.key;
+      row.title = d.hint;
+
+      const lab = document.createElement('label');
+      lab.className = 'chk';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.dataset.fx = d.key;
+      cb.addEventListener('change', () => setFx(d.key, cb.checked));
+      lab.appendChild(cb);
+      lab.appendChild(document.createTextNode(' ' + d.label));
+
+      const sl = document.createElement('input');
+      sl.type = 'range';
+      sl.min = 0; sl.max = AMT_MAX; sl.step = 1;
+      sl.dataset.amt = d.key;
+      sl.title = d.label + ' strength';
+      sl.addEventListener('input', () => setAmt(d.key, sl.value / 100));
+
+      const val = document.createElement('span');
+      val.className = 'val';
+      val.dataset.amtVal = d.key;
+
+      row.appendChild(lab);
+      row.appendChild(sl);
+      row.appendChild(val);
+      root.appendChild(row);
+    }
+    syncFxRows();
+  }
+
+  function syncFxRows() {
+    $('audioFx').querySelectorAll('.fx-row').forEach(row => {
+      const key = row.dataset.fx;
+      const on = !!audio.fx[key];
+      row.classList.toggle('off', !on);
+      row.querySelector('input[data-fx]').checked = on;
+      const sl = row.querySelector('input[data-amt]');
+      const pct = amtPct(key);
+      if (parseInt(sl.value, 10) !== pct) sl.value = pct;
+      row.querySelector('[data-amt-val]').textContent = pct + '%';
+    });
+  }
 
   function audioSettings() {
     try { return JSON.parse(localStorage.getItem(LS_AUDIO) || '{}'); } catch { return {}; }
   }
   function saveAudioSettings(on) {
-    localStorage.setItem(LS_AUDIO, JSON.stringify({ on, sens: parseInt($('audioSens').value, 10) }));
+    localStorage.setItem(LS_AUDIO, JSON.stringify({
+      on,
+      sens: parseInt($('audioSens').value, 10),
+      fx: { ...audio.fx },
+      amt: { ...audio.amt },
+      focus: Math.round(audio.musicFocus * 100),
+      adapt: audio.adapt,
+      deviceId: audio.deviceId || '',
+    }));
+  }
+  function applyFxSettings(src) {
+    if (!src) return;
+    if (src.fx) for (const k of FX_KEYS) if (typeof src.fx[k] === 'boolean') audio.fx[k] = src.fx[k];
+    if (src.amt) for (const k of FX_KEYS) if (Number.isFinite(src.amt[k])) audio.amt[k] = Math.max(0, Math.min(AMT_MAX / 100, src.amt[k]));
+    if (Number.isFinite(src.focus)) applyFocus(src.focus);
+    if (typeof src.adapt === 'boolean') { audio.adapt = src.adapt; $('adaptChk').checked = src.adapt; }
   }
   function syncAudioUI() {
-    $('audioBtnLabel').textContent = audio.enabled ? 'LIVE' : 'OFF';
-    $('audioBtn').classList.toggle('live', audio.enabled);
-    $('audioSens').classList.toggle('hidden', !audio.enabled);
+    const on = audio.enabled;
+    const file = on && audio.sourceKind === 'file';
+    $('audioBtnLabel').textContent = on ? (file ? 'FILE' : 'LIVE') : 'OFF';
+    $('audioBtn').classList.toggle('live', on);
+    $('audioSens').classList.toggle('hidden', !on);
+    $('audioToggleBtn').textContent = on ? (file ? 'FILE PLAYING — STOP' : 'MIC LIVE') : 'MIC OFF';
+    $('audioToggleBtn').classList.toggle('on', on);
+    $('adaptChk').checked = audio.adapt;
+    syncFxRows();
+    setRecordUI();
+    if (!on) setMeters();
     broadcastState();
   }
 
+  // sensitivity lives in two sliders (top bar + panel); keep them and the analyser in step
+  function applySens(v) {
+    v = Math.max(1, Math.min(30, parseInt(v, 10) || 10));
+    $('audioSens').value = v;
+    $('audioSensPanel').value = v;
+    $('audioSensVal').textContent = v;
+    audio.sensitivity = v / 2;
+  }
+  function setSens(v) {
+    applySens(v);
+    saveAudioSettings(audio.enabled);
+    broadcastState();
+  }
+
+  function setFx(key, on) {
+    if (!FX_KEYS.includes(key)) return;
+    audio.fx[key] = !!on;
+    if (!on) audio._applyComposite();   // clear a composite effect right away, not on the next tick
+    saveAudioSettings(audio.enabled);
+    syncAudioUI();
+  }
+  function setAmt(key, value) {
+    if (!FX_KEYS.includes(key)) return;
+    const v = Math.max(0, Math.min(AMT_MAX / 100, parseFloat(value)));
+    if (!Number.isFinite(v)) return;
+    audio.amt[key] = v;
+    audio._applyComposite();
+    saveAudioSettings(audio.enabled);
+    syncFxRows();
+    broadcastState();
+  }
+  // fx = which are on; amt = strengths (omit to reset all to 100%)
+  function setAllFx(fx, amt) {
+    for (const k of FX_KEYS) {
+      audio.fx[k] = !!fx[k];
+      audio.amt[k] = amt && Number.isFinite(amt[k]) ? amt[k] : 1;
+    }
+    audio._applyComposite();
+    saveAudioSettings(audio.enabled);
+    syncAudioUI();
+  }
+
+  function setMeters() {
+    const pct = (v) => Math.round(Math.min(1, Math.max(0, v)) * 100) + '%';
+    $('mLevel').style.width = pct(audio.level);
+    $('mBass').style.width = pct(audio.bass);
+    $('mMid').style.width = pct(audio.mid);
+    $('mTreb').style.width = pct(audio.treble);
+    $('beatDot').classList.toggle('hit', audio.beat > 0.5);
+    $('mMusic').style.width = pct(audio.enabled ? audio.music : 0);
+    $('clipBadge').classList.toggle('hit', audio.enabled && audio.clip);
+  }
+
+  // ---- room adaptation toggle ----
+  $('adaptChk').addEventListener('change', () => setAdapt($('adaptChk').checked));
+  function setAdapt(on) {
+    audio.adapt = !!on;
+    $('adaptChk').checked = audio.adapt;
+    saveAudioSettings(audio.enabled);
+    broadcastState();
+  }
+
+  // ---- record mic + analysis log for offline tuning ----
+  let recTimer = null;
+  function setRecordUI() {
+    const on = audio.recording;
+    $('recordBtn').classList.toggle('recording', on);
+    $('recordBtn').textContent = on ? 'STOP' : 'RECORD 45s';
+    $('recordBtn').disabled = !audio.enabled || audio.sourceKind !== 'mic';
+    $('recordBtn').title = audio.sourceKind === 'file'
+      ? 'Recording works from the mic input only'
+      : 'Record 45 seconds of the mic plus the analysis log, then download both — send them back to tune the detector for this room';
+    if (!on) {
+      clearInterval(recTimer);
+      recTimer = null;
+    }
+    broadcastState();
+  }
+  function startRecording() {
+    if (!audio.enabled || audio.sourceKind !== 'mic') {
+      alert('Turn the mic on first — recording captures the live input.');
+      return;
+    }
+    if (!audio.startRecording(45)) return;
+    const t0 = performance.now();
+    $('recordStatus').classList.remove('hidden');
+    recTimer = setInterval(() => {
+      const s = Math.min(45, (performance.now() - t0) / 1000);
+      $('recordStatus').textContent = 'RECORDING ' + s.toFixed(0) + 's / 45s — play a song, then let someone talk.';
+    }, 250);
+    setRecordUI();
+  }
+  audio.onRecording = (blob, log) => {
+    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const ext = (blob.type || '').includes('mp4') ? 'm4a' : 'webm';
+    downloadBlob(blob, 'shaderboi-room-' + ts + '.' + ext);
+    setTimeout(() => downloadBlob(new Blob([JSON.stringify(log)], { type: 'application/json' }),
+      'shaderboi-room-' + ts + '.analysis.json'), 400);
+    $('recordStatus').textContent = 'Saved two files (audio + analysis log) to your downloads. Send both back for tuning.';
+    setRecordUI();
+  };
+  $('recordBtn').addEventListener('click', () => {
+    if (audio.recording) audio.stopRecording();
+    else startRecording();
+  });
+
+  function applyFocus(v) {
+    v = Math.max(0, Math.min(100, parseInt(v, 10)));
+    if (!Number.isFinite(v)) v = 70;
+    $('focusSlider').value = v;
+    $('focusVal').textContent = v;
+    audio.musicFocus = v / 100;
+  }
+  function setFocus(v) {
+    applyFocus(v);
+    saveAudioSettings(audio.enabled);
+    broadcastState();
+  }
+  $('focusSlider').addEventListener('input', () => setFocus($('focusSlider').value));
+
+  async function refreshDevices() {
+    const list = await AudioReactive.listInputs();
+    const sel = $('audioDevice');
+    sel.innerHTML = '';
+    const def = document.createElement('option');
+    def.value = '';
+    def.textContent = 'DEFAULT INPUT';
+    sel.appendChild(def);
+    let n = 0;
+    for (const d of list) {
+      if (!d.deviceId || d.deviceId === 'default' || d.deviceId === 'communications') continue;
+      n++;
+      const o = document.createElement('option');
+      o.value = d.deviceId;
+      // labels are only exposed once mic permission has been granted
+      o.textContent = (d.label || ('INPUT ' + n)).toUpperCase();
+      sel.appendChild(o);
+    }
+    const fileOpt = document.createElement('option');
+    fileOpt.value = '__file';
+    fileOpt.textContent = audio.sourceKind === 'file' && audio.fileName
+      ? 'FILE: ' + audio.fileName.toUpperCase()
+      : 'AUDIO FILE…';
+    sel.appendChild(fileOpt);
+    if (audio.sourceKind === 'file') {
+      sel.value = '__file';
+      return;
+    }
+    const known = audio.deviceId && [...sel.options].some(o => o.value === audio.deviceId);
+    sel.value = known ? audio.deviceId : '';
+  }
+
+  // analyse an audio file (a venue recording) instead of the mic, for tuning at home
+  $('audioFileInput').addEventListener('change', async () => {
+    const f = $('audioFileInput').files[0];
+    $('audioFileInput').value = '';
+    if (!f) { refreshDevices(); return; }
+    try {
+      await audio.startFile(f);
+    } catch (err) {
+      console.warn('Could not play that file:', err);
+      alert('Could not decode that audio file.');
+    }
+    saveAudioSettings(audio.enabled && audio.sourceKind === 'mic');
+    syncAudioUI();
+    refreshDevices();
+  });
+
   async function setAudio(on, opts = {}) {
     if (on && !audio.enabled) {
-      try {
-        await audio.start();
-      } catch (err) {
+      let err = null;
+      try { await audio.start(audio.deviceId); }
+      catch (e) { err = e; }
+      // a remembered input may be unplugged: fall back to the default device
+      if (err && audio.deviceId) {
+        audio.deviceId = null;
+        try { await audio.start(null); err = null; } catch (e) { err = e; }
+      }
+      if (err) {
         console.warn('Microphone unavailable:', err);
         if (!opts.silent) {
           alert('Could not access the microphone.\nCheck the browser’s mic permission for this page.');
@@ -339,25 +707,47 @@
         syncAudioUI();
         return;
       }
+      refreshDevices();   // labels become available after the first grant
     } else if (!on && audio.enabled) {
       audio.stop();
+      refreshDevices();
     }
     saveAudioSettings(audio.enabled);
     syncAudioUI();
   }
 
   $('audioBtn').addEventListener('click', () => setAudio(!audio.enabled));
-  $('audioSens').addEventListener('input', () => {
-    audio.sensitivity = parseInt($('audioSens').value, 10) / 2;
+  $('audioToggleBtn').addEventListener('click', () => setAudio(!audio.enabled));
+  $('audioSens').addEventListener('input', () => setSens($('audioSens').value));
+  $('audioSensPanel').addEventListener('input', () => setSens($('audioSensPanel').value));
+  $('fxNoneBtn').addEventListener('click', () => setAllFx({}));
+  $('fxDefaultsBtn').addEventListener('click', () => setAllFx(AudioReactive.defaultFx()));
+  $('audioDevice').addEventListener('change', async () => {
+    const id = $('audioDevice').value || null;
+    if (id === '__file') {
+      $('audioFileInput').click();
+      return;
+    }
+    try {
+      if (audio.sourceKind === 'file') {
+        // leaving file mode: back to the mic
+        audio.stop();
+        audio.deviceId = id;
+        await audio.start(id);
+      } else {
+        await audio.setDevice(id);
+      }
+    } catch (err) {
+      console.warn('Input switch failed:', err);
+      alert('Could not open that input. Falling back to the default device.');
+      await audio.setDevice(null).catch(() => {});
+    }
     saveAudioSettings(audio.enabled);
+    syncAudioUI();
+    refreshDevices();
   });
-
-  {
-    const s = audioSettings();
-    if (s.sens) $('audioSens').value = s.sens;
-    audio.sensitivity = parseInt($('audioSens').value, 10) / 2;
-    // resume if it was on last session (works without a prompt once permission is granted)
-    if (s.on) setAudio(true, { silent: true });
+  if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+    navigator.mediaDevices.addEventListener('devicechange', refreshDevices);
   }
 
   // ---------- keep the display awake (no screensaver/sleep during shows) ----------
@@ -455,7 +845,15 @@
       presets: presetsCache,
       playing: engine.playing,
       stage: inStage(),
-      audio: { on: audio.enabled, sens: parseInt($('audioSens').value, 10) },
+      audio: {
+        on: audio.enabled, sens: parseInt($('audioSens').value, 10),
+        fx: { ...audio.fx }, amt: { ...audio.amt },
+        focus: Math.round(audio.musicFocus * 100),
+        adapt: audio.adapt,
+        source: audio.sourceKind,
+        recording: audio.recording,
+      },
+      fxDefs: FX_DEFS.map(d => ({ key: d.key, label: d.label, group: d.group })),
     });
   }
 
@@ -483,10 +881,26 @@
         await setAudio(m.on);
         break;
       case 'sens':
-        $('audioSens').value = m.value;
-        audio.sensitivity = m.value / 2;
-        saveAudioSettings(audio.enabled);
-        broadcastState();
+        setSens(m.value);
+        break;
+      case 'fx':
+        setFx(m.key, m.on);
+        break;
+      case 'fxAll':
+        setAllFx(m.defaults ? AudioReactive.defaultFx() : {});
+        break;
+      case 'amt':
+        setAmt(m.key, m.value);
+        break;
+      case 'focus':
+        setFocus(m.value);
+        break;
+      case 'adapt':
+        setAdapt(m.on);
+        break;
+      case 'record':
+        if (audio.recording) audio.stopRecording();
+        else startRecording();
         break;
       case 'stage':
         setStage(m.on);
@@ -494,13 +908,18 @@
     }
   };
 
-  // stream the mic level to the remote's meter (throttled)
+  // local meters every tick; stream level + bands to the remote's meters (throttled)
   let lastLevelSent = 0;
-  audio.onLevel = (v) => {
+  audio.onLevel = () => {
+    setMeters();
     const now = performance.now();
-    if (now - lastLevelSent > 150) {
+    if (now - lastLevelSent > 100) {
       lastLevelSent = now;
-      ctlChannel.postMessage({ type: 'level', v: Math.min(1, v) });
+      ctlChannel.postMessage({
+        type: 'level',
+        v: Math.min(1, audio.level), b: audio.bass, m: audio.mid, t: audio.treble, beat: audio.beat,
+        music: audio.music, clip: audio.clip,
+      });
     }
   };
 
@@ -789,6 +1208,20 @@
     activateShader(BUILTIN_SHADERS[0].id);
   }
   renderLayerUI();
+
+  // audio: restore settings, then resume listening if it was on last session
+  // (works without a prompt once permission is granted)
+  {
+    const s = audioSettings();
+    applyFxSettings(s);
+    audio.deviceId = s.deviceId || null;
+    applySens(s.sens || 10);
+    if (!Number.isFinite(s.focus)) applyFocus(70);
+    renderFxList();
+    syncAudioUI();
+    refreshDevices();
+    if (s.on) setAudio(true, { silent: true });
+  }
 
   (async () => {
     await layerMgr.restore();          // bring back layers from the previous session

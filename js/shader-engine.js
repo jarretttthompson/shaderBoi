@@ -17,6 +17,9 @@ class ShaderEngine {
     this.onTick = null;         // callback(time)
     this.fade = null;           // {program, uniforms, start} — outgoing shader during crossfade
     this.fadeDuration = 1.8;    // seconds
+    this.timeScale = 1;         // >1 = audio time warp (app.js drives this)
+    this.audio = null;          // AudioReactive instance feeding iAudio* uniforms
+    this._audioFrame = -1;
 
     this._initGeometry();
     this._initChannels();
@@ -59,6 +62,37 @@ class ShaderEngine {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.generateMipmap(gl.TEXTURE_2D);
+
+    // Sound texture in Shadertoy's layout: 512x2, row 0 = spectrum, row 1 = waveform,
+    // single red channel (read it with .x). Exposed to shaders as `iAudio`.
+    this._audioBuf = new Uint8Array(512 * 2);
+    this.audioTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, this.audioTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, 512, 2, 0, gl.RED, gl.UNSIGNED_BYTE, this._audioBuf);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  }
+
+  // Attach the analyser whose level/bands/beat/spectrum drive the audio uniforms.
+  setAudio(audio) { this.audio = audio; }
+
+  _syncAudioTexture() {
+    const a = this.audio;
+    if (!a) return;
+    const frame = a.enabled ? a.frame : -2;     // when off, upload zeros once
+    if (frame === this._audioFrame) return;
+    this._audioFrame = frame;
+    if (a.enabled) {
+      this._audioBuf.set(a.spectrum, 0);
+      this._audioBuf.set(a.wave, 512);
+    } else {
+      this._audioBuf.fill(0);
+    }
+    const gl = this.gl;
+    gl.bindTexture(gl.TEXTURE_2D, this.audioTex);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 512, 2, gl.RED, gl.UNSIGNED_BYTE, this._audioBuf);
   }
 
   _wrapSource(userCode) {
@@ -77,6 +111,13 @@ uniform sampler2D iChannel1;
 uniform sampler2D iChannel2;
 uniform sampler2D iChannel3;
 uniform vec3 iChannelResolution[4];
+// shaderBoi audio inputs (all 0 when the mic is off)
+uniform sampler2D iAudio;        // 512x2: row 0 spectrum, row 1 waveform (.x)
+uniform float iAudioLevel;       // smoothed loudness 0..1
+uniform float iBass;             // band energies 0..1
+uniform float iMid;
+uniform float iTreble;
+uniform float iBeat;             // 1 on a bass onset, decays to 0
 out vec4 SD_fragColor;
 #line 1
 ${userCode}
@@ -128,7 +169,8 @@ void main() {
     const u = {};
     for (const name of ['iResolution', 'iTime', 'iTimeDelta', 'iFrameRate', 'iFrame',
                         'iMouse', 'iDate', 'iChannel0', 'iChannel1', 'iChannel2', 'iChannel3',
-                        'iChannelResolution']) {
+                        'iChannelResolution',
+                        'iAudio', 'iAudioLevel', 'iBass', 'iMid', 'iTreble', 'iBeat']) {
       u[name] = this.gl.getUniformLocation(prog, name);
     }
     return u;
@@ -183,6 +225,16 @@ void main() {
       const loc = u['iChannel' + i];
       if (loc) gl.uniform1i(loc, i);
     }
+    // audio (uniform calls on a null location are ignored, so unused inputs cost nothing)
+    const a = this.audio && this.audio.enabled ? this.audio : null;
+    gl.uniform1f(u.iAudioLevel, a ? a.level : 0);
+    gl.uniform1f(u.iBass, a ? a.bass : 0);
+    gl.uniform1f(u.iMid, a ? a.mid : 0);
+    gl.uniform1f(u.iTreble, a ? a.treble : 0);
+    gl.uniform1f(u.iBeat, a ? a.beat : 0);
+    gl.activeTexture(gl.TEXTURE4);
+    gl.bindTexture(gl.TEXTURE_2D, this.audioTex);
+    if (u.iAudio) gl.uniform1i(u.iAudio, 4);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 
@@ -195,8 +247,9 @@ void main() {
     if (this.lastStamp !== null) dt = (stamp - this.lastStamp) / 1000;
     this.lastStamp = stamp;
     if (dt > 0.25) dt = 0.25;
-    if (this.playing) this.time += dt;
+    if (this.playing) this.time += dt * this.timeScale;
 
+    this._syncAudioTexture();
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
 
     if (this.fade) {

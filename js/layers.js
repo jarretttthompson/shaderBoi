@@ -11,6 +11,9 @@ class LayerManager {
     this.onChange = null;      // UI refresh callback
     this.drag = null;
     this._persistTimer = null;
+    this.pulse = 0;            // transient audio-driven scale bump (0 = none), never persisted
+    this.wobble = 0;           // transient audio-driven rotation offset in degrees
+    this.preDraw = null;       // optional callback(ctx) drawn under the layers (audio overlays)
 
     this._resize();
     window.addEventListener('resize', () => { this._resize(); this.render(); });
@@ -26,6 +29,29 @@ class LayerManager {
 
   // ---------- layer creation ----------
 
+  // Layer positions are stored as viewport fractions (xf, yf). The pixel position
+  // (x, y) is derived on every read, so resizing the window, entering fullscreen for
+  // stage mode, or loading a scene while the window is hidden never moves a layer
+  // off its relative spot. Setting x/y converts back to fractions.
+  _makeLayer(fields) {
+    const layer = { xf: 0.5, yf: 0.5, ...fields };
+    if (!Number.isFinite(layer.xf)) layer.xf = 0.5;
+    if (!Number.isFinite(layer.yf)) layer.yf = 0.5;
+    Object.defineProperties(layer, {
+      x: {
+        enumerable: false,
+        get() { return this.xf * window.innerWidth; },
+        set(v) { if (window.innerWidth > 0 && Number.isFinite(v)) this.xf = v / window.innerWidth; },
+      },
+      y: {
+        enumerable: false,
+        get() { return this.yf * window.innerHeight; },
+        set(v) { if (window.innerHeight > 0 && Number.isFinite(v)) this.yf = v / window.innerHeight; },
+      },
+    });
+    return layer;
+  }
+
   addImage(img, name, x, y) {
     // Normalize very large sources so processing stays fast.
     const maxDim = 1600;
@@ -37,13 +63,14 @@ class LayerManager {
     src.width = w; src.height = h;
     src.getContext('2d').drawImage(img, 0, 0, w, h);
 
-    const layer = {
+    const vw = window.innerWidth || 1280, vh = window.innerHeight || 720;
+    const layer = this._makeLayer({
       id: (crypto.randomUUID ? crypto.randomUUID() : 'ly-' + Date.now() + '-' + Math.random()),
       name: name || 'layer',
       src, srcW: w, srcH: h,
-      x: x ?? window.innerWidth / 2,
-      y: y ?? window.innerHeight / 2,
-      scale: Math.min(1, (window.innerWidth * 0.3) / w, (window.innerHeight * 0.5) / h),
+      xf: x != null && window.innerWidth > 0 ? x / window.innerWidth : 0.5,
+      yf: y != null && window.innerHeight > 0 ? y / window.innerHeight : 0.5,
+      scale: Math.min(1, (vw * 0.3) / w, (vh * 0.5) / h),
       scaleX: 1,
       scaleY: 1,
       rotation: 0,
@@ -60,7 +87,7 @@ class LayerManager {
       cache: null,
       thumb: null,
       _blob: null,
-    };
+    });
     this.layers.push(layer);
     this.rebuild(layer);
     this.select(layer);
@@ -100,8 +127,8 @@ class LayerManager {
       name: layer.name,
       order,
       blob: layer._blob,
-      xf: layer.x / window.innerWidth,
-      yf: layer.y / window.innerHeight,
+      xf: layer.xf,
+      yf: layer.yf,
       scale: layer.scale,
       scaleX: layer.scaleX ?? 1,
       scaleY: layer.scaleY ?? 1,
@@ -142,12 +169,12 @@ class LayerManager {
         const src = document.createElement('canvas');
         src.width = img.width; src.height = img.height;
         src.getContext('2d').drawImage(img, 0, 0);
-        const layer = {
+        const layer = this._makeLayer({
           id: r.id,
           name: r.name,
           src, srcW: src.width, srcH: src.height,
-          x: r.xf * window.innerWidth,
-          y: r.yf * window.innerHeight,
+          xf: r.xf,
+          yf: r.yf,
           scale: r.scale,
           scaleX: r.scaleX ?? 1,
           scaleY: r.scaleY ?? 1,
@@ -165,7 +192,7 @@ class LayerManager {
           cache: null,
           thumb: null,
           _blob: r.blob,
-        };
+        });
         this.layers.push(layer);
         if (r.vectorized) this.trace(layer);   // re-derive vector paths from the source
         else this.rebuild(layer);
@@ -308,13 +335,21 @@ class LayerManager {
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
 
+    if (this.preDraw) {
+      ctx.save();
+      try { this.preDraw(ctx); } catch (err) { console.warn('overlay draw failed', err); }
+      ctx.restore();
+    }
+
+    const pulse = 1 + (this.pulse || 0);
+    const wobble = (this.wobble || 0) * Math.PI / 180;
     for (const layer of this.layers) {
       if (!layer.cache) continue;
       const { canvas: c, pad } = layer.cache;
       ctx.save();
       ctx.translate(layer.x, layer.y);
-      ctx.rotate(layer.rotation * Math.PI / 180);
-      ctx.scale(layer.scale * (layer.scaleX ?? 1), layer.scale * (layer.scaleY ?? 1));
+      ctx.rotate(layer.rotation * Math.PI / 180 + wobble);
+      ctx.scale(layer.scale * (layer.scaleX ?? 1) * pulse, layer.scale * (layer.scaleY ?? 1) * pulse);
       ctx.globalAlpha = layer.opacity;
       ctx.drawImage(c, -c.width / 2, -c.height / 2);
       ctx.restore();
