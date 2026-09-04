@@ -145,6 +145,14 @@ Live meters for all of them sit in the panel and in the stage remote.
     random direction, harder on bigger hits) move the whole picture, logos included.
   - *Shader*: **TIME WARP** — shader time runs up to 2.6× faster with the level, so any shader
     moves with the music.
+  - *Shader FX* — a post-processing pass on the shader output (logos untouched), modelled on
+    Procreate's Adjustments menu. Level-driven: **SOFT BLOOM** (Bloom: bright parts spill into a
+    real glow), **BURN** (Bloom's Burn slider: highlights flare hotter and saturate while shadows
+    deepen), **HALFTONE** (Screen Print dot screen), **GRADIENT MAP** (ember → amber → cream ramp),
+    **SHARPEN**, **NOISE** (film grain). Beat-driven: **CHROMATIC** (Chromatic Aberration in
+    Perspective mode), **GLITCH** (Artifact row slices plus a Diverge channel split), **ZOOM BLUR**
+    (Perspective Blur toward the center), **RIPPLE** (Liquify-style rings from the center). The pass
+    only runs while at least one of these is active, so it costs nothing otherwise.
   - *Logo*: **PULSE** (logos swell ~6% on beats and breathe with the level), **GLOW** (warm halo
     around the logos on beats), **WOBBLE** (logos rock with the bass). All display-only; saved
     layer geometry is untouched.

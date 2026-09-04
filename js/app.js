@@ -192,10 +192,26 @@
       beatStrength = Math.min(1, 0.45 + audio.bass * 0.8);   // bigger hits knock harder
       shakeAng = Math.random() * Math.PI * 2;
     }
+    const age = beatT0 ? (now - beatT0) / 1000 : 99;
+    const env = live ? Math.exp(-age / 0.24) * beatStrength : 0;
+    const lv = live ? audio.level : 0;
+    const lvc = Math.pow(lv, 1.6);
+
+    // shader post-processing (Procreate-style adjustments), level- or beat-driven
+    const P = engine.post;
+    P.softbloom = lvc * k('softbloom');
+    P.burn = lvc * k('burn');
+    P.halftone = lv * k('halftone');
+    P.gradmap = lv * k('gradmap');
+    P.sharpen = lv * k('sharpen');
+    P.grain = lv * k('grain');
+    P.aber = (env * 0.7 + lv * 0.3) * k('aber');
+    P.glitch = env * k('glitch');
+    P.zoomblur = env * k('zoomblur');
+    P.ripple = env * k('ripple');
+
     const kz = k('zoom'), ks = k('shake');
     if (kz || ks) {
-      const age = beatT0 ? (now - beatT0) / 1000 : 99;
-      const env = Math.exp(-age / 0.24) * beatStrength;
       let zoom = 1 + (env * 0.07 + audio.level * 0.012) * kz;
       let sx = 0, sy = 0;
       if (ks && env > 0.004) {
