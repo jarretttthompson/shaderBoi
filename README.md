@@ -54,6 +54,14 @@ server, though any static server technically works.
   so logos can be widened or squashed without touching the overall size.
 - **Color**: ORIG / TINT (recolor, keeps shading) / FILL (solid silhouette) + color picker.
 - **Knock out white BG**: strips white backgrounds from JPEGs/flat logos (threshold slider).
+- **Cut out** (magic wand, as in patchNet's image FX): **CLICK TO CUT**, then click any part of the
+  image to remove that connected same-color region; **TOLERANCE** sets how different a color can be
+  and still belong to the region. **CUT EDGES** removes everything touching the image border (a quick
+  background strip for busy backgrounds the white knockout can't handle). **UNDO CUT** (or **⌘Z**)
+  steps back one cut, **CLEAR CUTS** removes them all, and **REVERT TO ORIGINAL** returns the layer
+  to the untouched image (cuts, knockout, recolor, outline and vector gone; position and size kept). Cuts are stored as seed points, so they persist, travel in scene files, and
+  re-apply before color and vectorize — trace a logo after cutting and the vector follows the cuts.
+  Esc leaves cut mode.
 - **Outline**: dilated contour outline, width + color.
 - **Vectorize**: TRACE → VECTOR converts the silhouette to clean vector paths
   (holes preserved, smoothing slider), toggle back to raster anytime, **SVG ⇩** downloads the file.
@@ -84,8 +92,15 @@ or Safari 16.4+; the console logs "screen wake lock active" on success.)
 
 Scene files placed in `presets/` and listed in `presets/index.json` appear under **PRESETS**
 in the library panel — one click loads shader + layers + audio settings. Ships with
-**Southern Social** (Ember Drift + the Southern Social logo, vectorized, centered), which
-also auto-loads on a first-ever boot with nothing saved.
+**Southern Social** (the default on a first-ever boot with nothing saved) and **The High Road**.
+
+**SAVE AS PRESET** stores the current composition under a name you choose. Running from the
+local `serve.py` it writes `presets/<slug>.json` and updates `index.json` on the spot (the ✕ on a
+preset removes it again); push the repo and the hosted site picks it up. On the static hosted
+site the button downloads the file instead, with instructions.
+
+The **search box** at the top of the library filters shaders and presets by name as you type;
+Enter loads the first match, Esc clears.
 
 ## Audio react
 

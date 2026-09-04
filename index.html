@@ -82,11 +82,15 @@
     <button class="collapse-btn" data-target="libraryPanel">–</button>
   </div>
   <div class="panel-body">
+    <input type="search" id="librarySearch" class="lib-search" placeholder="SEARCH SHADERS + PRESETS" spellcheck="false" autocomplete="off">
     <ul id="shaderList" class="shader-list"></ul>
+    <div id="libraryEmpty" class="empty-msg hidden">No matches.</div>
     <button id="addShaderBtn" class="big-action">+ ADD SHADER</button>
-    <div id="presetSection" class="hidden">
+    <div id="presetSection">
       <div class="ctl-divider">PRESETS</div>
       <ul id="presetList" class="shader-list"></ul>
+      <div id="presetEmpty" class="empty-msg hidden">No presets yet.</div>
+      <button id="savePresetBtn" class="small-action full" title="Save the current shader, layers and audio settings as a named preset in the site's presets folder">SAVE AS PRESET</button>
     </div>
 
     <div id="audioSection">
@@ -189,6 +193,21 @@
         <input type="range" id="knockoutSlider" min="160" max="254" value="235">
       </div>
 
+      <div class="ctl-divider">CUT OUT</div>
+      <div class="ctl-group">
+        <label>TOLERANCE <span id="cutTolVal" class="val">32</span></label>
+        <input type="range" id="cutTolSlider" min="0" max="128" value="32" title="How different a color can be and still count as the same region">
+      </div>
+      <div class="ctl-group btn-row">
+        <button id="cutModeBtn" class="small-action" title="Then click any part of the logo to remove that connected region (magic-wand style). Esc to stop.">CLICK TO CUT</button>
+        <button id="cutEdgesBtn" class="small-action" title="Remove everything connected to the image border (background)">CUT EDGES</button>
+      </div>
+      <div class="ctl-group btn-row">
+        <button id="cutUndoBtn" class="small-action" disabled title="Undo the last cut (⌘Z)">UNDO CUT</button>
+        <button id="cutClearBtn" class="small-action danger" disabled>CLEAR CUTS</button>
+      </div>
+      <div class="hint" id="cutHint"></div>
+
       <div class="ctl-divider">OUTLINE</div>
       <div class="ctl-group seg-row">
         <div class="grow">
@@ -208,6 +227,9 @@
         <button id="downloadSvgBtn" class="small-action" disabled>SVG ⇩</button>
       </div>
 
+      <div class="ctl-group btn-row">
+        <button id="revertLayerBtn" class="small-action" title="Back to the untouched image: removes cuts, knockout, recolor, outline and vector. Keeps position and size.">REVERT TO ORIGINAL</button>
+      </div>
       <div class="ctl-group btn-row">
         <button id="deleteLayerBtn" class="small-action danger">DELETE LAYER</button>
       </div>

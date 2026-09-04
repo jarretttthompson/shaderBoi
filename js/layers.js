@@ -14,6 +14,8 @@ class LayerManager {
     this.pulse = 0;            // transient audio-driven scale bump (0 = none), never persisted
     this.wobble = 0;           // transient audio-driven rotation offset in degrees
     this.preDraw = null;       // optional callback(ctx) drawn under the layers (audio overlays)
+    this.cutMode = false;      // click on a layer = flood-fill remove that region
+    this.onCutClick = null;    // callback(layer, srcX, srcY) in cut mode
 
     this._resize();
     window.addEventListener('resize', () => { this._resize(); this.render(); });
@@ -34,7 +36,10 @@ class LayerManager {
   // stage mode, or loading a scene while the window is hidden never moves a layer
   // off its relative spot. Setting x/y converts back to fractions.
   _makeLayer(fields) {
-    const layer = { xf: 0.5, yf: 0.5, ...fields };
+    // cuts: flood-fill removals, stored as seed points in source-pixel coords so they
+    // persist and re-apply (before colorize / vectorize) on every rebuild
+    const layer = { xf: 0.5, yf: 0.5, cuts: [], edgeCut: null, cutTol: 32, ...fields };
+    if (!Array.isArray(layer.cuts)) layer.cuts = [];
     if (!Number.isFinite(layer.xf)) layer.xf = 0.5;
     if (!Number.isFinite(layer.yf)) layer.yf = 0.5;
     Object.defineProperties(layer, {
@@ -142,6 +147,9 @@ class LayerManager {
       outlineColor: layer.outlineColor,
       vectorized: layer.vectorized,
       epsilon: layer.epsilon,
+      cuts: layer.cuts.map(c => ({ x: c.x, y: c.y, tol: c.tol })),
+      edgeCut: layer.edgeCut,
+      cutTol: layer.cutTol,
     };
   }
 
@@ -189,6 +197,9 @@ class LayerManager {
           vectorized: false,
           traced: null,
           epsilon: r.epsilon ?? 1.5,
+          cuts: r.cuts || [],
+          edgeCut: Number.isFinite(r.edgeCut) ? r.edgeCut : null,
+          cutTol: Number.isFinite(r.cutTol) ? r.cutTol : 32,
           cache: null,
           thumb: null,
           _blob: r.blob,
@@ -221,15 +232,144 @@ class LayerManager {
     }
 
     ctx.drawImage(layer.src, 0, 0);
-    if (layer.knockout) {
+    const mask = this._cutMask(layer);
+    if (layer.knockout || mask) {
       const id = ctx.getImageData(0, 0, w, h);
       const d = id.data, t = layer.knockoutThresh;
-      for (let i = 0; i < d.length; i += 4) {
-        if (d[i] >= t && d[i + 1] >= t && d[i + 2] >= t) d[i + 3] = 0;
+      const n = w * h;
+      for (let i = 0; i < n; i++) {
+        const o = i * 4;
+        if (mask && mask[i] === 0) { d[o + 3] = 0; continue; }
+        if (layer.knockout && d[o] >= t && d[o + 1] >= t && d[o + 2] >= t) d[o + 3] = 0;
       }
       ctx.putImageData(id, 0, 0);
     }
     return c;
+  }
+
+  // ---------- flood-fill cuts (magic-wand style removal) ----------
+
+  // Source pixels, read once per layer.
+  _srcData(layer) {
+    if (!layer._srcData) {
+      layer._srcData = layer.src.getContext('2d').getImageData(0, 0, layer.srcW, layer.srcH);
+    }
+    return layer._srcData;
+  }
+
+  // Alpha mask (1 = keep, 0 = cut) built from the layer's cut seeds; cached until the
+  // cuts change. Returns null when there is nothing to cut.
+  _cutMask(layer) {
+    const hasCuts = (layer.cuts && layer.cuts.length) || Number.isFinite(layer.edgeCut);
+    if (!hasCuts) { layer._cutMask = null; layer._cutSig = ''; return null; }
+    const sig = JSON.stringify([layer.cuts, layer.edgeCut]);
+    if (layer._cutMask && layer._cutSig === sig) return layer._cutMask;
+
+    const w = layer.srcW, h = layer.srcH;
+    const src = this._srcData(layer);
+    const mask = new Uint8Array(w * h).fill(1);
+    if (Number.isFinite(layer.edgeCut)) {
+      // everything connected to the border: seed from every edge pixel
+      for (let x = 0; x < w; x++) {
+        LayerManager.floodCut(src, mask, w, h, x, 0, layer.edgeCut);
+        LayerManager.floodCut(src, mask, w, h, x, h - 1, layer.edgeCut);
+      }
+      for (let y = 0; y < h; y++) {
+        LayerManager.floodCut(src, mask, w, h, 0, y, layer.edgeCut);
+        LayerManager.floodCut(src, mask, w, h, w - 1, y, layer.edgeCut);
+      }
+    }
+    for (const c of layer.cuts) LayerManager.floodCut(src, mask, w, h, c.x, c.y, c.tol);
+    layer._cutMask = mask;
+    layer._cutSig = sig;
+    return mask;
+  }
+
+  // Flood from (sx, sy): every 4-connected pixel within per-channel `tol` of the seed
+  // color is cut (mask = 0). Already-transparent pixels are boundaries. Returns the
+  // number of pixels cut.
+  static floodCut(src, mask, w, h, sx, sy, tol) {
+    sx = Math.round(sx); sy = Math.round(sy);
+    if (sx < 0 || sy < 0 || sx >= w || sy >= h) return 0;
+    const d = src.data;
+    const i0 = sy * w + sx;
+    if (mask[i0] === 0 || d[i0 * 4 + 3] < 8) return 0;
+    const sr = d[i0 * 4], sg = d[i0 * 4 + 1], sb = d[i0 * 4 + 2];
+    const stack = [i0];
+    let n = 0;
+    const total = w * h;
+    while (stack.length) {
+      const i = stack.pop();
+      if (mask[i] === 0) continue;
+      const o = i * 4;
+      if (d[o + 3] < 8) continue;
+      if (Math.abs(d[o] - sr) > tol || Math.abs(d[o + 1] - sg) > tol || Math.abs(d[o + 2] - sb) > tol) continue;
+      mask[i] = 0;
+      n++;
+      const x = i % w;
+      if (x > 0) stack.push(i - 1);
+      if (x < w - 1) stack.push(i + 1);
+      if (i >= w) stack.push(i - w);
+      if (i + w < total) stack.push(i + w);
+    }
+    return n;
+  }
+
+  // Screen point → source-pixel coords of a layer (null if outside the image).
+  toSourcePoint(layer, px, py) {
+    const a = -layer.rotation * Math.PI / 180;
+    const dx = px - layer.x, dy = py - layer.y;
+    const lx = (dx * Math.cos(a) - dy * Math.sin(a)) / (layer.scale * (layer.scaleX ?? 1));
+    const ly = (dx * Math.sin(a) + dy * Math.cos(a)) / (layer.scale * (layer.scaleY ?? 1));
+    const sx = Math.floor(lx + layer.srcW / 2), sy = Math.floor(ly + layer.srcH / 2);
+    if (sx < 0 || sy < 0 || sx >= layer.srcW || sy >= layer.srcH) return null;
+    return { x: sx, y: sy };
+  }
+
+  addCut(layer, sx, sy, tol) {
+    // ignore clicks on pixels that are already gone
+    const mask = this._cutMask(layer);
+    const i = sy * layer.srcW + sx;
+    if ((mask && mask[i] === 0) || this._srcData(layer).data[i * 4 + 3] < 8) return false;
+    layer.cuts.push({ x: sx, y: sy, tol: tol ?? layer.cutTol });
+    this.reprocess(layer);
+    return true;
+  }
+
+  setEdgeCut(layer, tol) {
+    layer.edgeCut = Number.isFinite(tol) ? tol : null;
+    this.reprocess(layer);
+  }
+
+  undoCut(layer) {
+    if (layer.cuts.length) layer.cuts.pop();
+    else if (Number.isFinite(layer.edgeCut)) layer.edgeCut = null;
+    this.reprocess(layer);
+  }
+
+  clearCuts(layer) {
+    layer.cuts = [];
+    layer.edgeCut = null;
+    this.reprocess(layer);
+  }
+
+  // Back to the untouched image: drops cuts, knockout, recolor, outline and vector state.
+  // Layout (position, scale, rotation, opacity) is kept.
+  revertProcessing(layer) {
+    layer.cuts = [];
+    layer.edgeCut = null;
+    layer.knockout = false;
+    layer.colorMode = 'original';
+    layer.outlineWidth = 0;
+    layer.vectorized = false;
+    layer.traced = null;
+    this.rebuild(layer);
+  }
+
+  // rebuild honoring the vector state (traced layers re-trace from the cut silhouette)
+  reprocess(layer) {
+    if (layer.vectorized) this.trace(layer);
+    else this.rebuild(layer);
   }
 
   _colorize(base, layer) {
@@ -435,6 +575,16 @@ class LayerManager {
 
     el.addEventListener('pointerdown', (e) => {
       const hit = this.hitTest(e.clientX, e.clientY);
+      if (this.cutMode) {
+        // cut mode: clicks remove regions instead of selecting / dragging
+        const target = (hit && hit === this.selected) ? hit : (hit || null);
+        if (target) {
+          if (target !== this.selected) this.select(target);
+          const p = this.toSourcePoint(target, e.clientX, e.clientY);
+          if (p && this.onCutClick) this.onCutClick(target, p.x, p.y);
+        }
+        return;
+      }
       if (hit) {
         this.select(hit);
         this.drag = { layer: hit, ox: e.clientX - hit.x, oy: e.clientY - hit.y };
@@ -485,6 +635,7 @@ class LayerManager {
     el.addEventListener('pointercancel', endDrag);
 
     el.addEventListener('wheel', (e) => {
+      if (this.cutMode) return;
       const hit = this.hitTest(e.clientX, e.clientY);
       const target = hit || this.selected;
       if (!target) return;

@@ -78,6 +78,7 @@ canvas#overlayCanvas {
   display: block;
   z-index: 1;
 }
+canvas#overlayCanvas.cutting { cursor: crosshair; }
 
 #bloomGlow {
   position: fixed; inset: 0;
@@ -285,6 +286,27 @@ body.stage.hide-cursor, body.stage.hide-cursor * { cursor: none !important; }
   scrollbar-width: thin;
   scrollbar-color: var(--line) transparent;
 }
+
+/* ============ library search ============ */
+.lib-search {
+  width: 100%;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.12em;
+  background: var(--ink);
+  color: var(--text);
+  border: 1px solid var(--line-dim);
+  border-radius: 4px;
+  padding: 0.45rem 0.6rem;
+  margin-bottom: 0.6rem;
+  outline: none;
+  appearance: none; -webkit-appearance: none;
+  user-select: text;
+}
+.lib-search::placeholder { color: var(--text-dim); }
+.lib-search:focus { border-color: var(--acc); box-shadow: 0 0 8px rgba(0, 255, 0, 0.2); }
+.lib-search::-webkit-search-cancel-button { filter: invert(1) sepia(1) saturate(5) hue-rotate(60deg); cursor: pointer; }
+#presetSection .small-action.full { margin-top: 0.4rem; }
 
 /* ============ shader list ============ */
 .shader-list, .layer-list { list-style: none; }

@@ -76,7 +76,35 @@
       li.addEventListener('click', () => activateShader(sh.id));
       ul.appendChild(li);
     }
+    applyLibraryFilter();
   }
+
+  // ---------- library search (shaders + presets) ----------
+  function applyLibraryFilter() {
+    const q = $('librarySearch').value.trim().toLowerCase();
+    const filter = (ul, emptyEl) => {
+      let shown = 0;
+      ul.querySelectorAll('li').forEach(li => {
+        const name = (li.querySelector('.sh-name') || li).textContent.toLowerCase();
+        const hit = !q || name.includes(q);
+        li.classList.toggle('hidden', !hit);
+        if (hit) shown++;
+      });
+      emptyEl.classList.toggle('hidden', !(q && shown === 0 && ul.children.length));
+      return shown;
+    };
+    filter($('shaderList'), $('libraryEmpty'));
+    filter($('presetList'), $('presetEmpty'));
+  }
+  $('librarySearch').addEventListener('input', applyLibraryFilter);
+  $('librarySearch').addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { $('librarySearch').value = ''; applyLibraryFilter(); $('librarySearch').blur(); }
+    if (e.key === 'Enter') {
+      // Enter activates the first visible match
+      const first = $('shaderList').querySelector('li:not(.hidden)') || $('presetList').querySelector('li:not(.hidden)');
+      if (first) first.click();
+    }
+  });
 
   // ---------- shader modal ----------
   let editingId = null;
@@ -282,6 +310,7 @@
         knockout: l.knockout, knockoutThresh: l.knockoutThresh,
         outlineWidth: l.outlineWidth, outlineColor: l.outlineColor,
         vectorized: l.vectorized, epsilon: l.epsilon,
+        cuts: l.cuts.map(c => ({ x: c.x, y: c.y, tol: c.tol })), edgeCut: l.edgeCut, cutTol: l.cutTol,
       });
     }
     return {
@@ -343,6 +372,9 @@
           knockout: rec.knockout, knockoutThresh: rec.knockoutThresh,
           outlineWidth: rec.outlineWidth, outlineColor: rec.outlineColor,
           epsilon: rec.epsilon ?? 1.5,
+          cuts: Array.isArray(rec.cuts) ? rec.cuts : [],
+          edgeCut: Number.isFinite(rec.edgeCut) ? rec.edgeCut : null,
+          cutTol: Number.isFinite(rec.cutTol) ? rec.cutTol : 32,
         });
         if (rec.vectorized) layerMgr.trace(layer);
         else layerMgr.rebuild(layer);
@@ -375,16 +407,19 @@
   // ---------- presets ----------
 
   let presetsCache = [];
+  // the local serve.py exposes a write API; the hosted static site does not
+  let presetApi = null;   // null = unknown, true/false once probed
 
-  async function loadPresets() {
-    let list;
+  async function probePresetApi() {
+    if (presetApi !== null) return presetApi;
     try {
-      const res = await fetch('presets/index.json', { cache: 'no-store' });
-      if (!res.ok) return [];
-      list = await res.json();
-    } catch { return []; }
-    if (!Array.isArray(list) || !list.length) return [];
+      const res = await fetch('api/presets', { cache: 'no-store' });
+      presetApi = res.ok && (await res.json()).writable === true;
+    } catch { presetApi = false; }
+    return presetApi;
+  }
 
+  function renderPresetList(list) {
     const ul = $('presetList');
     ul.innerHTML = '';
     for (const p of list) {
@@ -393,6 +428,14 @@
       name.className = 'sh-name';
       name.textContent = p.name;
       li.appendChild(name);
+      if (presetApi) {
+        const del = document.createElement('button');
+        del.className = 'li-btn del';
+        del.textContent = '✕';
+        del.title = 'Remove this preset from the site';
+        del.addEventListener('click', (e) => { e.stopPropagation(); deletePreset(p); });
+        li.appendChild(del);
+      }
       li.addEventListener('click', async () => {
         try {
           const res = await fetch('presets/' + p.file, { cache: 'no-store' });
@@ -404,11 +447,79 @@
       });
       ul.appendChild(li);
     }
-    $('presetSection').classList.remove('hidden');
+    $('presetEmpty').classList.toggle('hidden', list.length > 0);
     presetsCache = list.map(p => ({ name: p.name, file: p.file }));
+    applyLibraryFilter();
     broadcastState();
+  }
+
+  async function loadPresets() {
+    await probePresetApi();
+    let list = [];
+    try {
+      const res = await fetch('presets/index.json', { cache: 'no-store' });
+      if (res.ok) list = await res.json();
+    } catch { list = []; }
+    if (!Array.isArray(list)) list = [];
+    renderPresetList(list);
     return list;
   }
+
+  // Save the current composition (shader + layers + audio settings) as a named preset.
+  // With the local server it lands in presets/ and shows up immediately (and on the
+  // hosted site after the next push). Without it, the file downloads with instructions.
+  async function savePreset(presetName) {
+    const current = findShader(activeId);
+    const suggested = presetsCache.find(p => p.name === presetName)?.name || (current ? current.name : 'My preset');
+    const name = (presetName || prompt('Preset name:', suggested) || '').trim();
+    if (!name) return null;
+    const existing = presetsCache.find(p => p.name.toLowerCase() === name.toLowerCase());
+    if (existing && !confirm('A preset called "' + existing.name + '" exists. Replace it?')) return null;
+
+    const scene = await serializeScene();
+    if (await probePresetApi()) {
+      try {
+        const res = await fetch('api/presets', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, scene }),
+        });
+        const out = await res.json();
+        if (!res.ok || !out.ok) throw new Error(out.error || res.statusText);
+        renderPresetList(out.presets);
+        return out.file;
+      } catch (err) {
+        console.warn('Preset save failed:', err);
+        alert('Could not save the preset: ' + err.message);
+        return null;
+      }
+    }
+    // static hosting: hand over the file
+    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'preset';
+    downloadBlob(new Blob([JSON.stringify(scene, null, 2)], { type: 'application/json' }), slug + '.json');
+    alert('This copy of shaderBoi can\'t write to the site, so the preset was downloaded as ' + slug + '.json.\n' +
+      'Drop it into the presets/ folder and add {"name": "' + name + '", "file": "' + slug + '.json"} to presets/index.json.');
+    return slug + '.json';
+  }
+
+  async function deletePreset(p) {
+    if (!confirm('Remove preset "' + p.name + '" from the site?')) return;
+    try {
+      const res = await fetch('api/presets/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ file: p.file }),
+      });
+      const out = await res.json();
+      if (!res.ok || !out.ok) throw new Error(out.error || res.statusText);
+      renderPresetList(out.presets);
+    } catch (err) {
+      console.warn('Preset delete failed:', err);
+      alert('Could not remove the preset: ' + err.message);
+    }
+  }
+
+  $('savePresetBtn').addEventListener('click', () => savePreset());
 
   // ---------- audio react: mic → brightness/bloom, shader uniforms, time warp, logo pulse ----------
   const audio = new AudioReactive({
@@ -991,6 +1102,9 @@
     knockout: $('knockoutChk'), knockoutSlider: $('knockoutSlider'), knockoutVal: $('knockoutVal'),
     knockoutGroup: $('knockoutThreshGroup'),
     outline: $('outlineSlider'), outlineVal: $('outlineVal'), outlineColor: $('outlineColor'),
+    cutTol: $('cutTolSlider'), cutTolVal: $('cutTolVal'),
+    cutMode: $('cutModeBtn'), cutEdges: $('cutEdgesBtn'), cutUndo: $('cutUndoBtn'), cutClear: $('cutClearBtn'),
+    cutHint: $('cutHint'),
     smooth: $('smoothSlider'), smoothVal: $('smoothVal'),
     trace: $('traceBtn'), svg: $('downloadSvgBtn'), del: $('deleteLayerBtn'),
   };
@@ -1047,6 +1161,18 @@
     ctl.outline.value = sel.outlineWidth;
     ctl.outlineVal.textContent = sel.outlineWidth;
     ctl.outlineColor.value = sel.outlineColor;
+    ctl.cutTol.value = sel.cutTol ?? 32;
+    ctl.cutTolVal.textContent = sel.cutTol ?? 32;
+    const nCuts = (sel.cuts ? sel.cuts.length : 0) + (Number.isFinite(sel.edgeCut) ? 1 : 0);
+    ctl.cutUndo.disabled = nCuts === 0;
+    ctl.cutClear.disabled = nCuts === 0;
+    ctl.cutEdges.classList.toggle('on', Number.isFinite(sel.edgeCut));
+    ctl.cutMode.classList.toggle('on', layerMgr.cutMode);
+    ctl.cutMode.textContent = layerMgr.cutMode ? 'CUTTING… (ESC)' : 'CLICK TO CUT';
+    ctl.cutHint.textContent = layerMgr.cutMode
+      ? 'Click a part of the logo to remove that connected region. Esc to stop.'
+      : nCuts ? nCuts + (nCuts === 1 ? ' cut applied.' : ' cuts applied.') + ' Cuts re-apply before color and vector.'
+              : 'Remove parts of the image: connected same-color regions (magic wand), or everything touching the border.';
     ctl.smooth.value = Math.round(sel.epsilon * 10);
     ctl.smoothVal.textContent = sel.epsilon.toFixed(1);
     ctl.colorSeg.querySelectorAll('button').forEach(b =>
@@ -1057,7 +1183,14 @@
     syncing = false;
   }
 
-  layerMgr.onChange = renderLayerUI;
+  layerMgr.onChange = () => {
+    // leaving the selection ends cut mode
+    if (layerMgr.cutMode && !layerMgr.selected) {
+      layerMgr.cutMode = false;
+      $('overlayCanvas').classList.remove('cutting');
+    }
+    renderLayerUI();
+  };
 
   // rebuild throttle (heavy pipeline ops)
   let rebuildQueued = false;
@@ -1146,6 +1279,40 @@
     queueRebuild(sel());
   });
 
+  // ---- cut out (flood-fill removal) ----
+  function setCutMode(on) {
+    layerMgr.cutMode = !!on && !!sel();
+    $('overlayCanvas').classList.toggle('cutting', layerMgr.cutMode);
+    renderLayerUI();
+  }
+  ctl.cutMode.addEventListener('click', () => setCutMode(!layerMgr.cutMode));
+  ctl.cutTol.addEventListener('input', () => {
+    ctl.cutTolVal.textContent = ctl.cutTol.value;
+    if (syncing || !sel()) return;
+    sel().cutTol = parseInt(ctl.cutTol.value, 10);
+    layerMgr.persistSoon();
+  });
+  ctl.cutEdges.addEventListener('click', () => {
+    if (!sel()) return;
+    // toggles: on with the current tolerance, off if already applied
+    layerMgr.setEdgeCut(sel(), Number.isFinite(sel().edgeCut) ? null : sel().cutTol);
+  });
+  ctl.cutUndo.addEventListener('click', () => { if (sel()) layerMgr.undoCut(sel()); });
+  ctl.cutClear.addEventListener('click', () => { if (sel()) layerMgr.clearCuts(sel()); });
+  $('revertLayerBtn').addEventListener('click', () => {
+    const layer = sel();
+    if (!layer) return;
+    const touched = layer.cuts.length || Number.isFinite(layer.edgeCut) || layer.knockout ||
+      layer.colorMode !== 'original' || layer.outlineWidth > 0 || layer.vectorized;
+    if (!touched) return;
+    if (!confirm('Revert "' + layer.name + '" to the original image?\nCuts, knockout, recolor, outline and vector are removed. Position and size are kept.')) return;
+    if (layerMgr.cutMode) setCutMode(false);
+    layerMgr.revertProcessing(layer);
+  });
+  layerMgr.onCutClick = (layer, sx, sy) => {
+    layerMgr.addCut(layer, sx, sy, layer.cutTol);
+  };
+
   ctl.smooth.addEventListener('change', () => {
     if (syncing || !sel()) return;
     sel().epsilon = parseInt(ctl.smooth.value, 10) / 10;
@@ -1185,7 +1352,26 @@
       if (e.key === 'Escape') closeModal();
       return;
     }
-    if (e.target !== document.body) return;
+    // shortcuts work unless the user is typing in a text field (a focused button or
+    // slider, e.g. right after clicking CLICK TO CUT, must not swallow them)
+    const t = e.target;
+    const tag = t && t.tagName;
+    const typing = tag === 'TEXTAREA' || (t && t.isContentEditable) ||
+      (tag === 'INPUT' && !['range', 'checkbox', 'color', 'file', 'button'].includes(t.type));
+    if (typing) return;
+    if (e.key === 'Escape' && layerMgr.cutMode) {
+      setCutMode(false);
+      return;
+    }
+    // ⌘Z / Ctrl+Z: undo the last cut on the selected layer
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === 'z' || e.key === 'Z')) {
+      const layer = sel();
+      if (layer && (layer.cuts.length || Number.isFinite(layer.edgeCut))) {
+        e.preventDefault();
+        layerMgr.undoCut(layer);
+      }
+      return;
+    }
     if (e.key === 'h' || e.key === 'H' || (e.key === 'Escape' && inStage())) {
       setStage(!inStage());
       return;
@@ -1194,12 +1380,15 @@
       e.preventDefault();
       layerMgr.remove(sel());
     }
-    if (e.key === ' ') {
+    if (e.key === ' ' && t === document.body) {   // a focused button keeps Space for itself
       e.preventDefault();
       $('playPauseBtn').click();
     }
     if (e.key === 'p' || e.key === 'P') exportPng();   // still available, just off the toolbar
   });
+
+  // small scripting surface (console / automation)
+  window.shaderBoi = { serializeScene, importScene, savePreset, loadPresets, activateShader };
 
   // ---------- boot ----------
   renderShaderList();
