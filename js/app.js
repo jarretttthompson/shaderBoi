@@ -168,6 +168,11 @@
   let lastGlow = '';
   let overlayAnimating = false;
   let seenBeat = 0, beatT0 = 0, beatStrength = 1, shakeAng = 0;
+  // per-frame smoothed copies of the analyser's 30 Hz values (removes stepping) — the
+  // SMOOTHING control sets how lazily they follow
+  const sm = { level: 0, bass: 0, env: 0 };
+  let lastTickAt = performance.now();
+  const approach = (cur, target, tau, dt) => (tau <= 0.001 ? target : cur + (target - cur) * (1 - Math.exp(-dt / tau)));
   const snapZero = (v) => (Math.abs(v) < 5e-4 ? 0 : v);
   engine.onTick = (t) => {
     const now = performance.now();
@@ -176,16 +181,17 @@
       $('timeReadout').textContent = 't ' + t.toFixed(1) + 's';
     }
 
-    // audio-driven shader / logo / overlay effects, evaluated per frame so they stay
-    // in step with the render (composite CSS effects are applied inside AudioReactive)
+    // audio-driven effects, evaluated per frame so they stay in step with the render.
+    // Every driver is a per-frame smoothed copy of the analyser's 30 Hz values, so
+    // nothing steps; SMOOTHING sets how lazily they follow.
     const live = audio.enabled;
     const k = (key) => (live ? audio.k(key) : 0);
-    engine.timeScale = 1 + audio.level * 1.6 * k('speed');
-    layerMgr.pulse = snapZero((audio.beat * 0.06 + audio.level * 0.025) * k('pulse'));
-    layerMgr.wobble = snapZero(Math.sin(now / 1000 * 3.1) * audio.bass * 3.5 * k('wobble'));
+    const dt = Math.min(0.1, Math.max(0.001, (now - lastTickAt) / 1000));
+    lastTickAt = now;
+    const s = Math.max(0, Math.min(1, audio.smooth));
 
-    // beat zoom + shake: envelope restarts on every detected onset, decays over ~0.6s.
-    // Animated here (per frame) rather than in the 30 Hz analyser loop so it's smooth.
+    // beat envelope: restarts on every detected onset. Smoothing softens the attack
+    // and lengthens the tail; at 0 it snaps.
     if (audio.beatCount !== seenBeat) {
       seenBeat = audio.beatCount;
       beatT0 = now;
@@ -193,9 +199,22 @@
       shakeAng = Math.random() * Math.PI * 2;
     }
     const age = beatT0 ? (now - beatT0) / 1000 : 99;
-    const env = live ? Math.exp(-age / 0.24) * beatStrength : 0;
-    const lv = live ? audio.level : 0;
+    const envTarget = live ? Math.exp(-age / (0.24 + 0.35 * s)) * beatStrength : 0;
+    sm.env = envTarget > sm.env ? approach(sm.env, envTarget, 0.09 * s, dt) : envTarget;
+
+    // level / bass glide between analyser ticks
+    const tau = 0.012 + 0.14 * s;
+    sm.level = approach(sm.level, live ? audio.level : 0, tau, dt);
+    sm.bass = approach(sm.bass, live ? audio.bass : 0, tau, dt);
+    const env = sm.env, lv = sm.level;
     const lvc = Math.pow(lv, 1.6);
+
+    // composite CSS effects (brightness, bloom, contrast, hue, flash) from the smoothed values
+    audio._applyComposite(lv, env);
+
+    engine.timeScale = 1 + lv * 1.6 * k('speed');
+    layerMgr.pulse = snapZero((env * 0.06 + lv * 0.025) * k('pulse'));
+    layerMgr.wobble = snapZero(Math.sin(now / 1000 * 3.1) * sm.bass * 3.5 * k('wobble'));
 
     // shader post-processing (Procreate-style adjustments), level- or beat-driven
     const P = engine.post;
@@ -212,7 +231,7 @@
 
     const kz = k('zoom'), ks = k('shake');
     if (kz || ks) {
-      let zoom = 1 + (env * 0.07 + audio.level * 0.012) * kz;
+      let zoom = 1 + (env * 0.07 + lv * 0.012) * kz;
       let sx = 0, sy = 0;
       if (ks && env > 0.004) {
         // damped knock along a random direction with a faster cross-axis wobble
@@ -227,7 +246,7 @@
       audio.applyTransform(1, 0, 0);
     }
 
-    const glowPx = (audio.beat * 22 + audio.level * 8) * k('glow');
+    const glowPx = (env * 22 + lv * 8) * k('glow');
     const glow = glowPx > 0.3 ? `drop-shadow(0 0 ${glowPx.toFixed(1)}px rgba(255, 225, 170, 0.9))` : '';
     if (glow !== lastGlow) {
       lastGlow = glow;
@@ -337,6 +356,7 @@
         sens: parseInt($('audioSens').value, 10),
         fx: { ...audio.fx }, amt: { ...audio.amt },
         focus: Math.round(audio.musicFocus * 100),
+        smooth: Math.round(audio.smooth * 100),
       },
       layers,
     };
@@ -543,6 +563,7 @@
     transformEl: $('vizWrap'),      // zoom / shake: whole picture
     glowEl: $('bloomGlow'),
   });
+  audio.externalDrive = true;       // onTick above applies composite effects per frame
   window.audioReact = audio;
   engine.setAudio(audio);
   const LS_AUDIO = 'shaderdeck.audio';
@@ -621,6 +642,7 @@
       fx: { ...audio.fx },
       amt: { ...audio.amt },
       focus: Math.round(audio.musicFocus * 100),
+      smooth: Math.round(audio.smooth * 100),
       adapt: audio.adapt,
       deviceId: audio.deviceId || '',
     }));
@@ -630,6 +652,7 @@
     if (src.fx) for (const k of FX_KEYS) if (typeof src.fx[k] === 'boolean') audio.fx[k] = src.fx[k];
     if (src.amt) for (const k of FX_KEYS) if (Number.isFinite(src.amt[k])) audio.amt[k] = Math.max(0, Math.min(AMT_MAX / 100, src.amt[k]));
     if (Number.isFinite(src.focus)) applyFocus(src.focus);
+    if (Number.isFinite(src.smooth)) applySmooth(src.smooth);
     if (typeof src.adapt === 'boolean') { audio.adapt = src.adapt; $('adaptChk').checked = src.adapt; }
   }
   function syncAudioUI() {
@@ -766,6 +789,20 @@
     broadcastState();
   }
   $('focusSlider').addEventListener('input', () => setFocus($('focusSlider').value));
+
+  function applySmooth(v) {
+    v = Math.max(0, Math.min(100, parseInt(v, 10)));
+    if (!Number.isFinite(v)) v = 40;
+    $('audioSmooth').value = v;
+    $('audioSmoothVal').textContent = v;
+    audio.smooth = v / 100;
+  }
+  function setSmooth(v) {
+    applySmooth(v);
+    saveAudioSettings(audio.enabled);
+    broadcastState();
+  }
+  $('audioSmooth').addEventListener('input', () => setSmooth($('audioSmooth').value));
 
   async function refreshDevices() {
     const list = await AudioReactive.listInputs();
@@ -976,6 +1013,7 @@
         on: audio.enabled, sens: parseInt($('audioSens').value, 10),
         fx: { ...audio.fx }, amt: { ...audio.amt },
         focus: Math.round(audio.musicFocus * 100),
+        smooth: Math.round(audio.smooth * 100),
         adapt: audio.adapt,
         source: audio.sourceKind,
         recording: audio.recording,
@@ -1022,6 +1060,9 @@
       case 'focus':
         setFocus(m.value);
         break;
+      case 'smooth':
+        setSmooth(m.value);
+        break;
       case 'adapt':
         setAdapt(m.on);
         break;
@@ -1036,10 +1077,11 @@
   };
 
   // local meters every tick; stream level + bands to the remote's meters (throttled)
-  let lastLevelSent = 0;
+  let lastLevelSent = 0, lastMeterAt = 0;
   audio.onLevel = () => {
-    setMeters();
     const now = performance.now();
+    // meters at ~30 fps is plenty for DOM writes; the effects themselves run per frame
+    if (now - lastMeterAt > 30) { lastMeterAt = now; setMeters(); }
     if (now - lastLevelSent > 100) {
       lastLevelSent = now;
       ctlChannel.postMessage({
@@ -1422,6 +1464,7 @@
     audio.deviceId = s.deviceId || null;
     applySens(s.sens || 10);
     if (!Number.isFinite(s.focus)) applyFocus(70);
+    if (!Number.isFinite(s.smooth)) applySmooth(40);
     renderFxList();
     syncAudioUI();
     refreshDevices();

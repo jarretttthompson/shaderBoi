@@ -1,7 +1,7 @@
 // Audio analysis + reactive effects.
 //
-// One microphone / line input (or an audio file, for tuning) is analysed ~30x per
-// second into:
+// One microphone / line input (or an audio file, for tuning) is analysed once per
+// displayed frame (60 fps on a normal display; a 33 ms timer while hidden) into:
 //   level            smoothed loudness 0..1 (fast attack, slow release)
 //   bass/mid/treble  band energies 0..1, each auto-gained against its own recent peak
 //   beat             1.0 on a detected kick onset, decaying back to 0 over ~0.3s
@@ -86,6 +86,13 @@ class AudioReactive {
     this.gain = 1;
     this._beatTimes = [];
 
+    // Smoothing 0..1: how lazily the level and bands follow the sound (attack + release),
+    // and how softly beats hit. app.js also interpolates per frame using this.
+    this.smooth = 0.4;
+    // when true, app.js drives the composite CSS effects per frame from interpolated
+    // values and the 30 Hz analyser loop leaves them alone
+    this.externalDrive = false;
+
     // Room adaptation: normalise loudness against the loudest recent passage (so a
     // quiet soundcheck and a packed room both use the full range) and remove the
     // steady crowd-noise floor before analysis.
@@ -116,11 +123,15 @@ class AudioReactive {
     this._freq = null;
     this._time = null;
     this._bandPeak = [0.05, 0.05, 0.05];
-    this._bassHist = new Float32Array(40);   // ~1.3s of kick energy at 33ms ticks
+    this._bassHist = new Float32Array(80);   // ~1.3s of kick energy at 60 fps
     this._histIdx = 0;
     this._histFill = 0;
     this._lastBeat = 0;
     this._tick = 0;
+    this._lastLoopAt = 0;
+    this._rafId = 0;
+    this._timerId = 0;
+    this.tickHz = 0;             // measured analysis rate (for the UI / logs)
 
     this._rec = null;
     this._recChunks = [];
@@ -183,7 +194,19 @@ class AudioReactive {
     this._rmsFloor = 0;
     this._floor.fill(0);
     this.enabled = true;
-    this._loop();
+    this._lastLoopAt = 0;
+    this._schedule();
+  }
+
+  // Analyse once per displayed frame (60 fps or whatever the display does); fall back
+  // to a 33 ms timer while the tab is hidden so meters and the remote keep moving.
+  _schedule() {
+    if (!this.enabled) return;
+    if (document.visibilityState === 'visible') {
+      this._rafId = requestAnimationFrame(() => this._loop());
+    } else {
+      this._timerId = setTimeout(() => this._loop(), 33);
+    }
   }
 
   // Switch input device, keeping the enabled state.
@@ -197,6 +220,8 @@ class AudioReactive {
   stop() {
     this.stopRecording();
     this.enabled = false;
+    cancelAnimationFrame(this._rafId);
+    clearTimeout(this._timerId);
     if (this._fileSrc) { try { this._fileSrc.stop(); } catch {} this._fileSrc = null; }
     if (this.stream) this.stream.getTracks().forEach(t => t.stop());
     if (this.audioCtx && this.audioCtx.state !== 'closed') this.audioCtx.close().catch(() => {});
@@ -228,6 +253,7 @@ class AudioReactive {
     const rec = new MediaRecorder(this.stream, mime ? { mimeType: mime } : undefined);
     this._rec = rec;
     this._recChunks = [];
+    this._lastSpectrumLog = 0;
     this.log = { startedAt: new Date().toISOString(), sampleRate: this.audioCtx.sampleRate, fftSize: this.analyser.fftSize,
                  sensitivity: this.sensitivity, musicFocus: this.musicFocus, adapt: this.adapt, deviceId: this.deviceId,
                  columns: ['t', 'rms', 'peak', 'bass', 'mid', 'treble', 'sub', 'kick', 'level', 'music', 'gain', 'beat', 'clip'],
@@ -258,14 +284,23 @@ class AudioReactive {
 
   _loop() {
     if (!this.enabled) return;
-    // timer instead of rAF so level tracking survives an obscured/backgrounded window
-    setTimeout(() => this._loop(), 33);
+    this._schedule();
 
     const an = this.analyser;
     an.getFloatTimeDomainData(this._time);
     an.getByteFrequencyData(this._freq);
     const now = performance.now();
     this._tick++;
+
+    // All followers below were tuned as per-tick coefficients at 33 ms. `q` rescales
+    // them to the actual frame time so the feel is identical at 60 fps, 120 fps or the
+    // hidden-tab timer: decay c per tick -> c^q, attack a per tick -> 1-(1-a)^q.
+    const dt = this._lastLoopAt ? Math.min(0.1, Math.max(0.002, (now - this._lastLoopAt) / 1000)) : 0.033;
+    this._lastLoopAt = now;
+    this.tickHz = this.tickHz ? this.tickHz * 0.95 + (1 / dt) * 0.05 : 1 / dt;
+    const q = dt / 0.033;
+    const D = (c) => Math.pow(c, q);
+    const A = (a) => 1 - Math.pow(1 - a, q);
 
     // ---- loudness + clipping ----
     let sum = 0, pk = 0;
@@ -289,14 +324,14 @@ class AudioReactive {
     if (this.adapt) {
       // steady floor (crowd chatter, HVAC): a slow-rising running minimum (settles in
       // ~40s, drops instantly in a gap), mostly removed
-      this._rmsFloor = Math.min(rms, this._rmsFloor + 0.00004);
+      this._rmsFloor = Math.min(rms, this._rmsFloor + 0.00004 * q);
       let eff = Math.max(0, rms - this._rmsFloor * 0.85);
       // normalise against the loudest recent passage (half-life ~20s): full scale =
       // recent peak, so the same slider position works at soundcheck and at midnight
-      this._peak = Math.max(eff, this._peak * 0.9988, 0.01);
+      this._peak = Math.max(eff, this._peak * D(0.9988), 0.01);
       raw = Math.min(1, (eff / this._peak) * (this.sensitivity / 5));
       bands = bands.map((v, i) => {
-        this._floor[i] = Math.min(v, this._floor[i] + 0.0001);
+        this._floor[i] = Math.min(v, this._floor[i] + 0.0001 * q);
         return Math.max(0, v - this._floor[i] * 0.8);
       });
     } else {
@@ -322,17 +357,20 @@ class AudioReactive {
         const bpm = 60000 / mean;
         if (cv < 0.3 && bpm > 55 && bpm < 210) evidence = Math.max(evidence, 0.85);
       }
-      this.music += (evidence - this.music) * (evidence > this.music ? 0.12 : 0.035);
+      this.music += (evidence - this.music) * A(evidence > this.music ? 0.12 : 0.035);
     } else {
-      this.music *= 0.999;   // silence: hold, drift down very slowly
+      this.music *= D(0.999);   // silence: hold, drift down very slowly
     }
     this.gain = 1 - this.musicFocus * (1 - this.music);
     const instant = raw * this.gain;
 
-    // fast attack, slow release: punchy on hits, smooth decay
+    // attack / release follower: punchy at low smoothing, lazy at high
+    const s = Math.max(0, Math.min(1, this.smooth));
+    const atk = 0.55 - 0.43 * s;          // 0.55 → 0.12 per 33ms
+    const rel = 0.92 + 0.065 * s;         // 0.92 → 0.985 per 33ms (~0.4s → ~2s tail)
     this.level = instant > this.level
-      ? this.level + (instant - this.level) * 0.55
-      : this.level * 0.92;
+      ? this.level + (instant - this.level) * A(atk)
+      : this.level * D(rel);
 
     // ---- bands ----
     // Auto-gained against a slowly decaying peak so they read the same at a quiet
@@ -340,12 +378,12 @@ class AudioReactive {
     // instead of amplifying the noise floor.
     const gate = Math.min(1, instant * 4);
     const out = [0, 1, 2].map((i) => {
-      this._bandPeak[i] = Math.max(bands[i], this._bandPeak[i] * 0.996, 0.05);
+      this._bandPeak[i] = Math.max(bands[i], this._bandPeak[i] * D(0.996), 0.05);
       return Math.min(1, bands[i] / this._bandPeak[i]) * gate;
     });
-    this.bass = this._follow(this.bass, out[0]);
-    this.mid = this._follow(this.mid, out[1]);
-    this.treble = this._follow(this.treble, out[2]);
+    this.bass = this._follow(this.bass, out[0], s, q);
+    this.mid = this._follow(this.mid, out[1], s, q);
+    this.treble = this._follow(this.treble, out[2], s, q);
 
     // ---- beat: kick-range energy jumping above its recent average ----
     const kick = bands[4];
@@ -375,7 +413,7 @@ class AudioReactive {
       this.beatCount++;
       this.beatAt = now;
     } else {
-      this.beat *= 0.86;
+      this.beat *= D(0.86);
     }
 
     // ---- Shadertoy sound texture ----
@@ -394,10 +432,14 @@ class AudioReactive {
       const r3 = (v) => Math.round(v * 1000) / 1000;
       this.log.ticks.push([r3(t), r3(rms), r3(pk), r3(bands[0]), r3(bands[1]), r3(bands[2]), r3(bands[3]), r3(bands[4]),
                            r3(this.level), r3(this.music), r3(this.gain), onset ? 1 : 0, this.clip ? 1 : 0]);
-      if (this._tick % 10 === 0) this.log.spectra.push([r3(t), Array.from(this._freq.subarray(0, 512))]);
+      // spectrum snapshot ~3x a second regardless of frame rate
+      if (!this._lastSpectrumLog || now - this._lastSpectrumLog > 330) {
+        this._lastSpectrumLog = now;
+        this.log.spectra.push([r3(t), Array.from(this._freq.subarray(0, 512))]);
+      }
     }
 
-    this._applyComposite();
+    if (!this.externalDrive) this._applyComposite();
     if (this.onLevel) this.onLevel(this.level);
   }
 
@@ -410,17 +452,19 @@ class AudioReactive {
     return s / ((b - a) * 255);
   }
 
-  _follow(cur, target) {
-    return target > cur ? cur + (target - cur) * 0.6 : cur * 0.86;
+  _follow(cur, target, s = 0, q = 1) {
+    const atk = 0.6 - 0.45 * s, rel = 0.86 + 0.11 * s;
+    return target > cur ? cur + (target - cur) * (1 - Math.pow(1 - atk, q)) : cur * Math.pow(rel, q);
   }
 
   // ---------- effects ----------
 
   // Whole-composite effects (CSS on the shader wrapper + the bloom layer). Shader, logo
   // and overlay effects are applied per frame by app.js from the same numbers.
-  _applyComposite() {
-    const lv = this.enabled ? this.level : 0;
-    const bt = this.enabled ? this.beat : 0;
+  // lv / bt default to the analyser's own values; app.js passes per-frame interpolated ones
+  _applyComposite(lvIn = this.level, btIn = this.beat) {
+    const lv = this.enabled ? lvIn : 0;
+    const bt = this.enabled ? btIn : 0;
     const active = lv > 0.003;
     const k = (key) => (this.enabled ? this.k(key) : 0);
     // brightness-type effects ride a curved level so quiet and mid-level passages barely

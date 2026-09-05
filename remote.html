@@ -197,6 +197,11 @@ button.recording { color: var(--acc); border-color: var(--acc); background: var(
     <input type="range" id="focus" min="0" max="100" value="70">
     <span class="val" id="focusVal">70</span>
   </div>
+  <div class="row" title="How lazily effects follow the sound: 0 twitchy, 100 gliding">
+    <label>SMOOTH</label>
+    <input type="range" id="smooth" min="0" max="100" value="40">
+    <span class="val" id="smoothVal">40</span>
+  </div>
   <div class="mrow"><label>MUSIC</label><div class="meter"><div class="meter-fill dim" id="mMusic"></div></div></div>
   <div class="row" style="margin-top:0.6rem">
     <button id="adaptBtn" title="Normalise to the room's loudness and remove the crowd-noise floor">ADAPT ON</button>
@@ -223,6 +228,7 @@ button.recording { color: var(--acc); border-color: var(--acc); background: var(
   let state = null;
   let sensDragging = false;
   let focusDragging = false;
+  let smoothDragging = false;
 
   const send = (msg) => ch.postMessage(msg);
 
@@ -243,6 +249,10 @@ button.recording { color: var(--acc); border-color: var(--acc); background: var(
     if (!focusDragging && Number.isFinite(state.audio.focus)) {
       $('focus').value = state.audio.focus;
       $('focusVal').textContent = state.audio.focus;
+    }
+    if (!smoothDragging && Number.isFinite(state.audio.smooth)) {
+      $('smooth').value = state.audio.smooth;
+      $('smoothVal').textContent = state.audio.smooth;
     }
     $('adaptBtn').textContent = state.audio.adapt === false ? 'ADAPT OFF' : 'ADAPT ON';
     $('adaptBtn').classList.toggle('on', state.audio.adapt !== false);
@@ -347,6 +357,12 @@ button.recording { color: var(--acc); border-color: var(--acc); background: var(
   $('adaptBtn').addEventListener('click', () => send({ cmd: 'adapt', on: !(state && state.audio.adapt !== false) }));
   $('recordBtn').addEventListener('click', () => send({ cmd: 'record' }));
 
+  $('smooth').addEventListener('pointerdown', () => { smoothDragging = true; });
+  $('smooth').addEventListener('pointerup', () => { smoothDragging = false; });
+  $('smooth').addEventListener('input', () => {
+    $('smoothVal').textContent = $('smooth').value;
+    send({ cmd: 'smooth', value: parseInt($('smooth').value, 10) });
+  });
   $('focus').addEventListener('pointerdown', () => { focusDragging = true; });
   $('focus').addEventListener('pointerup', () => { focusDragging = false; });
   $('focus').addEventListener('input', () => {

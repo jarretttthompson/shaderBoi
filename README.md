@@ -105,7 +105,8 @@ Enter loads the first match, Esc clears.
 ## Audio react
 
 The mic button (top bar) or **MIC OFF/LIVE** in the **AUDIO REACT** section of the library panel
-starts listening. The input is analysed ~30× a second into a smoothed **level**, **bass / mid /
+starts listening. The input is analysed once per displayed frame (60 fps on a normal display,
+falling back to a 33 ms timer while the tab is hidden) into a smoothed **level**, **bass / mid /
 treble** band energies (each auto-gained against its own recent peak, so they read the same at
 soundcheck and in a packed room) and a **beat** detector (bass onsets above the recent average).
 Live meters for all of them sit in the panel and in the stage remote.
@@ -123,6 +124,10 @@ Live meters for all of them sit in the panel and in the stage remote.
   when confidence is low: 0 reacts to everything, 100 reacts to music only (default 70). The
   **MUSIC** meter shows the detector's confidence so you can watch it work; if it stays low during
   a song, the room mic probably isn't picking up enough low end — move it or lower the focus.
+- **SMOOTHING** sets how lazily everything follows the sound. It slows the level and band
+  followers (attack and release), softens each beat's attack and lengthens its tail, and every
+  effect is interpolated per frame so nothing steps even if the analyser drops a frame. 0 is
+  twitchy and instant, 100 is slow gliding swells with soft beats; 40 is the default.
 - **ROOM ADAPT** (on by default) makes the same settings work at soundcheck and in a packed room.
   Loudness is normalised against the loudest recent passage, so "full" always means "as loud as
   it has been lately" rather than a fixed volume, and a slow-tracking noise floor (crowd chatter,
