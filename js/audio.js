@@ -7,7 +7,8 @@
 //   beat             1.0 on a detected kick onset, decaying back to 0 over ~0.3s
 //   music            0..1 confidence that the input is music rather than speech
 //   clip             true while the input is hitting the converter ceiling
-//   rms              raw loudness this tick, before adaptation (the applause meter's input)
+//   rms              raw loudness this tick, before adaptation
+//   crowdRms         raw loudness above 400 Hz (no kick / bass / sub) — the applause meter's input
 //   spectrum/wave    512-entry byte rows in Shadertoy's sound-texture layout
 //
 // Consumers: the CSS effects on the shader (applied here), the shader uniforms +
@@ -15,6 +16,10 @@
 // Which of those react, and how hard, is chosen with the `fx` / `amt` tables.
 
 class AudioReactive {
+  // The applause meter reads the input above this frequency only, so a band's kick, bass and
+  // sub count for little while voices and clapping count in full.
+  static METER_HIGHPASS_HZ = 400;
+
   // Every audio-driven effect, in UI order. `def` = on by default. The panel and the
   // stage remote both build their checkbox lists from this table.
   static FX = [
@@ -105,6 +110,7 @@ class AudioReactive {
     this._clipUntil = 0;
     this.rms = 0;                // raw RMS this tick, before room adaptation (applause meter)
     this.peakSample = 0;         // raw sample peak this tick
+    this.crowdRms = 0;           // raw RMS above 400 Hz this tick (the applause meter's input)
 
     this.level = 0;
     this.bass = 0;
@@ -122,6 +128,9 @@ class AudioReactive {
     this.stream = null;
     this.audioCtx = null;
     this.analyser = null;
+    this._meterAn = null;            // crowd-band analyser (after the high-passes)
+    this._hp = null;
+    this._meterTime = null;
     this._fileSrc = null;
     this._freq = null;
     this._time = null;
@@ -191,6 +200,17 @@ class AudioReactive {
     node.connect(this.analyser);
     this._freq = new Uint8Array(this.analyser.frequencyBinCount);
     this._time = new Float32Array(this.analyser.fftSize);
+    // crowd band for the applause meter: two 2nd-order high-passes (24 dB/oct) at 400 Hz take
+    // the kick, bass guitar and sub out of the reading, then a plain analyser gives its RMS
+    this._hp = [ctx.createBiquadFilter(), ctx.createBiquadFilter()];
+    // (Web Audio takes a highpass Q in dB: -3 dB is the flat Butterworth response, -6 dB at 400 Hz for the pair)
+    for (const f of this._hp) { f.type = 'highpass'; f.frequency.value = AudioReactive.METER_HIGHPASS_HZ; f.Q.value = -3; }
+    node.connect(this._hp[0]);
+    this._hp[0].connect(this._hp[1]);
+    this._meterAn = ctx.createAnalyser();
+    this._meterAn.fftSize = 2048;
+    this._hp[1].connect(this._meterAn);
+    this._meterTime = new Float32Array(this._meterAn.fftSize);
     this._histFill = 0;
     this._beatTimes.length = 0;
     this._peak = 0.05;
@@ -231,13 +251,15 @@ class AudioReactive {
     this.stream = null;
     this.audioCtx = null;
     this.analyser = null;
+    this._meterAn = null;
+    this._hp = null;
     this.sourceKind = null;
     this.fileName = null;
     this.level = this.bass = this.mid = this.treble = this.beat = 0;
     this.music = 0;
     this.gain = 1;
     this.clip = false;
-    this.rms = this.peakSample = 0;
+    this.rms = this.peakSample = this.crowdRms = 0;
     this.spectrum.fill(0);
     this.wave.fill(0);
     this.frame++;
@@ -317,6 +339,11 @@ class AudioReactive {
     const rms = Math.sqrt(sum / this._time.length);
     this.rms = rms;
     this.peakSample = pk;
+    // crowd-band loudness (bass filtered out) for the applause meter
+    this._meterAn.getFloatTimeDomainData(this._meterTime);
+    let cs = 0;
+    for (let i = 0; i < this._meterTime.length; i++) cs += this._meterTime[i] * this._meterTime[i];
+    this.crowdRms = Math.sqrt(cs / this._meterTime.length);
     if (pk > 0.985) this._clipUntil = now + 400;
     this.clip = now < this._clipUntil;
 

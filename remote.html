@@ -193,10 +193,15 @@ button.recording { color: var(--acc); border-color: var(--acc); background: var(
     <button id="apMeasureBtn" disabled title="Timed round: the loudest moment locks in as the score">MEASURE</button>
   </div>
   <div class="row"><button id="apClearBtn" disabled title="Forget every score">NEW CONTEST</button></div>
-  <div class="row" title="How loud the room must be to read 100 (higher = easier)">
+  <div class="row" title="How loud the room must be to reach the top of the scale (higher = easier)">
     <label>RANGE</label>
     <input type="range" id="apRange" min="0" max="100" value="50">
     <span class="val" id="apRangeVal">50</span>
+  </div>
+  <div class="row" title="Compression for a loud room: dB above the RANGE ceiling that still raise the score (0 = hard top)">
+    <label>HEADROOM</label>
+    <input type="range" id="apHeadroom" min="0" max="30" value="12">
+    <span class="val" id="apHeadroomVal">+12</span>
   </div>
   <div class="row" title="How long MEASURE listens">
     <label>ROUND</label>
@@ -257,6 +262,7 @@ button.recording { color: var(--acc); border-color: var(--acc); background: var(
   let smoothDragging = false;
   let apRangeDragging = false;
   let apRoundDragging = false;
+  let apHeadroomDragging = false;
 
   const send = (msg) => ch.postMessage(msg);
 
@@ -318,6 +324,7 @@ button.recording { color: var(--acc); border-color: var(--acc); background: var(
     $('apClearBtn').disabled = !(ap.count || ap.measuring || ap.locked);
     if (!apRangeDragging) { $('apRange').value = ap.range ?? 50; $('apRangeVal').textContent = ap.range ?? 50; }
     if (!apRoundDragging) { $('apRound').value = ap.roundSec ?? 6; $('apRoundVal').textContent = (ap.roundSec ?? 6) + 's'; }
+    if (!apHeadroomDragging) { $('apHeadroom').value = ap.headroom ?? 12; $('apHeadroomVal').textContent = '+' + (ap.headroom ?? 12); }
     const rounds = ap.rounds || [], off = (ap.count || rounds.length) - rounds.length;
     $('apRounds').textContent = rounds.map((s, i) => '#' + (off + i + 1) + ' ' + s).join('   ');
     if (!ap.on) { $('apScore').textContent = '—'; $('apSub').textContent = 'METER OFF'; return; }
@@ -412,6 +419,12 @@ button.recording { color: var(--acc); border-color: var(--acc); background: var(
   $('apRange').addEventListener('input', () => {
     $('apRangeVal').textContent = $('apRange').value;
     send({ cmd: 'applauseRange', value: parseInt($('apRange').value, 10) });
+  });
+  $('apHeadroom').addEventListener('pointerdown', () => { apHeadroomDragging = true; });
+  $('apHeadroom').addEventListener('pointerup', () => { apHeadroomDragging = false; });
+  $('apHeadroom').addEventListener('input', () => {
+    $('apHeadroomVal').textContent = '+' + $('apHeadroom').value;
+    send({ cmd: 'applauseHeadroom', value: parseInt($('apHeadroom').value, 10) });
   });
   $('apRound').addEventListener('pointerdown', () => { apRoundDragging = true; });
   $('apRound').addEventListener('pointerup', () => { apRoundDragging = false; });

@@ -940,7 +940,7 @@
   }
   function applauseState() {
     return {
-      on: meter.on, range: meter.range, roundSec: meter.roundSec, theme: meter.theme,
+      on: meter.on, range: meter.range, roundSec: meter.roundSec, headroom: meter.headroom, theme: meter.theme,
       measuring: meter.measuring, locked: meter.locked, score: meter.score, best: meter.best,
       count: meter.rounds.length, rounds: meter.rounds.slice(-12),
     };
@@ -956,6 +956,8 @@
     $('applauseClearBtn').disabled = !(meter.rounds.length || meter.round);
     $('applauseRange').value = meter.range;
     $('applauseRangeVal').textContent = meter.range;
+    $('applauseHeadroom').value = meter.headroom;
+    $('applauseHeadroomVal').textContent = '+' + meter.headroom + ' dB';
     $('applauseRound').value = meter.roundSec;
     $('applauseRoundVal').textContent = meter.roundSec + 's';
     // the logo composition rides up to make room for the meter (display only)
@@ -984,6 +986,12 @@
   $('applauseRange').addEventListener('input', () => {
     meter.range = parseInt($('applauseRange').value, 10);
     $('applauseRangeVal').textContent = meter.range;
+    saveApplauseSettings();
+    broadcastState();
+  });
+  $('applauseHeadroom').addEventListener('input', () => {
+    meter.headroom = parseInt($('applauseHeadroom').value, 10);
+    $('applauseHeadroomVal').textContent = '+' + meter.headroom + ' dB';
     saveApplauseSettings();
     broadcastState();
   });
@@ -1165,6 +1173,11 @@
         break;
       case 'applauseRange':
         meter.range = Math.max(0, Math.min(100, parseInt(m.value, 10) || 0));
+        saveApplauseSettings();
+        syncApplauseUI();
+        break;
+      case 'applauseHeadroom':
+        meter.headroom = Math.max(0, Math.min(30, parseInt(m.value, 10) || 0));
         saveApplauseSettings();
         syncApplauseUI();
         break;

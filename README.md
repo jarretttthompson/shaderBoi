@@ -115,11 +115,22 @@ A crowd-loudness meter for contests (costume contest, dance-off). **APPLAUSE** i
 rides up to the top third of the screen and a big LED ladder with a huge score takes the lower
 half. Turning it on turns the mic on if it was off.
 
-- It reads the **raw** mic loudness, before ROOM ADAPT and MUSIC FOCUS, on a **fixed dB scale**, so
-  every contestant is judged the same however loud the night has been. **RANGE** sets how loud the
-  room must be to read 100 (higher = easier): at soundcheck, have a few people cheer and set it so
-  a big cheer just reaches 100, then leave it alone for the whole contest. The operator hint at the
-  bottom of the window (hidden in stage mode) shows the live level in dBFS and the current ceiling.
+- It reads the **raw** mic loudness **above 400 Hz**, before ROOM ADAPT and MUSIC FOCUS, on a
+  **fixed dB scale**, so every contestant is judged the same however loud the night has been. The
+  high-pass takes the kick, bass guitar and sub out of the reading, so a band on the PA counts for
+  much less than voices and clapping (it still counts: pause the music while measuring).
+  **RANGE** sets how loud the room must be to reach the top of the scale (higher = easier): at
+  soundcheck, have a few people cheer and set it so a big cheer reads about 85, then leave it alone
+  for the whole contest. The operator hint at the bottom of the window (hidden in stage mode) shows
+  the live crowd level in dBFS and where 75 and 100 sit.
+- **HEADROOM** (0–30 dB, default 12) is the compressor for a loud room. Scores up to 75 are linear
+  in dB; above that, the 9 dB up to the RANGE ceiling *plus* HEADROOM dB are squeezed into the last
+  25 points (ratio (9 + headroom) / 9, so 2.3:1 at the default). A room that screams 6 dB louder
+  than your calibration reads 93 instead of pinning at 100. 0 dB is the hard top, where the ceiling
+  itself reads 100.
+- **CLIP** beside the ladder (and the badge in AUDIO REACT) means the Mac's converter is saturated:
+  every louder sound then reads the same, and nothing in the app can undo it. Lower the input volume
+  in System Settings → Sound → Input until it stays dark through the loudest song.
 - **MEASURE** (**M**) runs a timed round (**ROUND**, 3–12 s, default 6): the screen says MAKE SOME
   NOISE with a countdown bar, the number climbs with the loudest moment so far, and at the end the
   score **locks in**, joins the list along the bottom and becomes the mark **TO BEAT** on the
@@ -131,7 +142,8 @@ half. Turning it on turns the mic on if it was off.
 Using the MacBook as the microphone works if the Mac sits where it hears the crowd and not inside
 a speaker's throw: pause the music while measuring (a playing PA reads as applause), set the
 mic mode in Control Center to **Standard** (Voice Isolation strips crowd noise), and if CLIP lights
-during cheers lower the input volume in System Settings → Sound → Input or raise RANGE.
+during the loudest moments lower the input volume in System Settings → Sound → Input. RANGE and
+HEADROOM shape the reading; they cannot restore a clipped one.
 
 ## Audio react
 

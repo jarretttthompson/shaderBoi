@@ -1,10 +1,12 @@
 // Applause-o-meter — a crowd-loudness meter for contests (costume contest, dance-off…).
 //
-// It reads the RAW microphone loudness (AudioReactive.rms, taken before room adaptation
-// and music focus) and maps it onto a FIXED dB scale, so every contestant is measured the
-// same way however the night has gone so far. On screen: a big LED ladder with a peak
-// hold, a huge score, and the mark to beat. MEASURE runs a timed round — the loudest
-// moment of the round locks in as that contestant's score and joins the list.
+// It reads the RAW microphone loudness above 400 Hz (AudioReactive.crowdRms, taken before room
+// adaptation and music focus, so a band's kick and bass count for little) and maps it onto a
+// FIXED dB scale, so every contestant is measured the same way however the night has gone so
+// far. HEADROOM compresses the top of the scale so a screaming room separates instead of
+// pinning at 100. On screen: a big LED ladder with a peak hold, a huge score, and the mark to
+// beat. MEASURE runs a timed round — the loudest moment of the round locks in as that
+// contestant's score and joins the list.
 //
 // The controls live in app.js (panel section, top bar button, keys A / M / C, the stage
 // remote). This class only measures and draws.
@@ -34,6 +36,7 @@ class ApplauseMeter {
     this.on = false;
     this.range = 50;        // 0..100: how loud the room must be to read 100 (higher = easier)
     this.roundSec = 6;      // seconds a MEASURE round listens before the score locks
+    this.headroom = 12;     // dB above the RANGE ceiling that still raise the score, compressed (0 = hard top)
     this.theme = 'halloween';
     this.live = 0;          // bar level 0..1 (fast attack, moderate release)
     this.slow = 0;          // ~120 ms follower the peaks are taken from (ignores one-frame spikes)
@@ -41,18 +44,34 @@ class ApplauseMeter {
     this.holdAt = 0;
     this.round = null;      // { start, end, peak, locked, score, newBest, lockedAt }
     this.rounds = [];       // locked scores, in contest order
-    this.db = -100;         // last raw loudness in dBFS (shown to the operator)
+    this.db = -100;         // last crowd-band loudness in dBFS (shown to the operator)
+    this.clip = false;      // the converter is clipping (raw samples at full scale) — a hardware limit
+    this._clipHintUntil = 0;
     this.onChange = null;   // callback when the on/round state changes (start, lock, clear)
     this._size = [0, 0, 0];
     this._lastAt = 0;
   }
 
   // ---- scale ----
-  // The dBFS that reads 100. RANGE 50 = -14 dBFS, about a big cheer near a MacBook mic at the
-  // default input level; a lower RANGE needs a louder room, a higher one makes 100 easier.
-  // 0 sits 36 dB under the ceiling. Both are fixed for the contest — no auto-gain.
+  // The dBFS of the RANGE ceiling. RANGE 50 = -14 dBFS, about a big cheer near a MacBook mic at
+  // the default input level; a lower RANGE needs a louder room, a higher one makes it easier.
+  // 0 sits 36 dB under the ceiling. Both are fixed for the contest — no auto-gain. With HEADROOM
+  // at 0 the ceiling reads 100; otherwise the top of the scale is compressed (see _score).
   get ceilingDb() { return Math.max(-30, Math.min(-1, -14 + (50 - this.range) * 0.3)); }
   get floorDb() { return this.ceilingDb - 36; }
+  static KNEE = 0.75;     // compression starts at 75 points
+  // the compressor above the knee: the 9 dB from the knee to the ceiling plus HEADROOM dB are
+  // squeezed into the last 25 points, so a room louder than the calibration still separates
+  get ratio() { const top = (1 - ApplauseMeter.KNEE) * (this.ceilingDb - this.floorDb); return (top + this.headroom) / top; }
+  get kneeDb() { return this.floorDb + ApplauseMeter.KNEE * (this.ceilingDb - this.floorDb); }
+  get topDb() { return this.ceilingDb + this.headroom; }   // the dBFS that reads 100
+  // score 0..1 for a crowd loudness in dBFS: linear in dB up to the knee, compressed above it
+  _score(db) {
+    const K = ApplauseMeter.KNEE;
+    const lin = (db - this.floorDb) / (this.ceilingDb - this.floorDb);
+    if (lin <= K) return Math.max(0, lin);
+    return Math.min(1, K + (lin - K) / this.ratio);
+  }
   get best() { return this.rounds.length ? Math.max(...this.rounds) : 0; }
   get measuring() { return !!(this.round && !this.round.locked); }
   get locked() { return !!(this.round && this.round.locked); }
@@ -63,11 +82,12 @@ class ApplauseMeter {
   }
   get remaining() { return this.measuring ? Math.max(0, (this.round.end - performance.now()) / 1000) : 0; }
 
-  settings() { return { range: this.range, roundSec: this.roundSec, theme: this.theme }; }
+  settings() { return { range: this.range, roundSec: this.roundSec, headroom: this.headroom, theme: this.theme }; }
   applySettings(s) {
     if (!s) return;
     if (Number.isFinite(s.range)) this.range = Math.max(0, Math.min(100, Math.round(s.range)));
     if (Number.isFinite(s.roundSec)) this.roundSec = Math.max(3, Math.min(12, Math.round(s.roundSec)));
+    if (Number.isFinite(s.headroom)) this.headroom = Math.max(0, Math.min(30, Math.round(s.headroom)));
     if (typeof s.theme === 'string' && ApplauseMeter.THEMES[s.theme]) this.theme = s.theme;
   }
 
@@ -82,7 +102,7 @@ class ApplauseMeter {
   // Start a timed round. The scores list and the mark to beat are kept.
   startRound(now = performance.now()) {
     if (!this.on || this.measuring) return false;
-    this.round = { start: now, end: now + this.roundSec * 1000, peak: 0, locked: false, score: 0, newBest: false, lockedAt: 0 };
+    this.round = { start: now, end: now + this.roundSec * 1000, peak: 0, locked: false, score: 0, newBest: false, lockedAt: 0, clipped: false };
     if (this.onChange) this.onChange();
     return true;
   }
@@ -105,9 +125,12 @@ class ApplauseMeter {
     this._lastAt = now;
     const a = this.audio;
     const mic = !!(a && a.enabled);
-    const rms = mic ? (a.rms || 0) : 0;
+    // the crowd band (above 400 Hz) when the analyser provides it, full-band RMS otherwise
+    const rms = mic ? (Number.isFinite(a.crowdRms) ? a.crowdRms : (a.rms || 0)) : 0;
     this.db = 20 * Math.log10(Math.max(rms, 1e-5));
-    const target = mic ? Math.max(0, Math.min(1, (this.db - this.floorDb) / (this.ceilingDb - this.floorDb))) : 0;
+    const target = mic ? this._score(this.db) : 0;
+    this.clip = mic && !!a.clip;
+    if (this.clip) this._clipHintUntil = now + 4000;
     const ap = (cur, t, tau) => cur + (t - cur) * (1 - Math.exp(-dt / tau));
     this.live = ap(this.live, target, target > this.live ? 0.04 : 0.3);
     this.slow = ap(this.slow, target, 0.12);
@@ -122,8 +145,9 @@ class ApplauseMeter {
         r.newBest = this.rounds.length > 0 && r.score > this.best;   // judged against earlier rounds
         this.rounds.push(r.score);
         if (this.onChange) this.onChange();
-      } else if (this.slow > r.peak) {
-        r.peak = this.slow;
+      } else {
+        if (this.slow > r.peak) r.peak = this.slow;
+        if (this.clip) r.clipped = true;
       }
     } else {
       // idle peak hold: sits for 1.2 s, then falls
@@ -218,6 +242,19 @@ class ApplauseMeter {
     this._rrect(ctx, x0 - 10 * u, y - 10 * u, (x1 - x0) + 20 * u, h + 20 * u, 10 * u);
     ctx.stroke();
 
+    // converter clipping: a red tag beside the ladder — the reading is capped by the hardware
+    // and only a lower input volume helps
+    if (this.clip) {
+      ctx.font = `700 ${Math.round(18 * u)}px ${mono}`;
+      ctx.fillStyle = T.warn;
+      ctx.shadowColor = T.warn;
+      ctx.shadowBlur = 14 * u;
+      ctx.textAlign = 'left';
+      ctx.fillText('CLIP', x1 + 22 * u, y + h / 2);
+      ctx.textAlign = 'center';
+      ctx.shadowBlur = 0;
+    }
+
     // peak marker: the round's peak while measuring / locked, the idle hold otherwise
     const peak = r ? r.peak : this.hold;
     if (peak > 0.005) {
@@ -277,7 +314,13 @@ class ApplauseMeter {
     if (!stage) {
       ctx.font = `400 ${Math.round(13 * u)}px ${mono}`;
       ctx.fillStyle = T.text;
-      ctx.fillText('A  METER      M  MEASURE      C  NEW CONTEST      mic ' + this.db.toFixed(0) + ' dBFS   (100 at ' + this.ceilingDb.toFixed(0) + ')', W / 2, H - 14);
+      let hint = 'A  METER      M  MEASURE      C  NEW CONTEST      crowd ' + this.db.toFixed(0) + ' dBFS   (75 at ' +
+        this.kneeDb.toFixed(0) + ', 100 at ' + this.topDb.toFixed(0) + ')';
+      if (now < this._clipHintUntil) {
+        hint = 'INPUT CLIPPING — lower the input volume in System Settings › Sound › Input (RANGE and HEADROOM cannot fix this)';
+        ctx.fillStyle = T.warn;
+      }
+      ctx.fillText(hint, W / 2, H - 14);
     }
   }
 
