@@ -711,3 +711,19 @@ input[type=color] {
 .modal-actions { display: flex; gap: 0.6rem; justify-content: flex-end; }
 .modal-actions .small-action { flex: none; padding: 0.5rem 1.2rem; }
 .modal-actions .big-action { width: auto; margin: 0; padding: 0.5rem 1.6rem; }
+
+/* ============ applause-o-meter ============ */
+.meter-canvas {
+  position: fixed; inset: 0;
+  width: 100vw; height: 100vh;
+  z-index: 3;
+  pointer-events: none;
+}
+/* while the meter shows, the logo composition rides up to make room (display only; the
+   saved layout is untouched — pointer hit-testing maps through the transform) */
+canvas#overlayCanvas {
+  transform-origin: 50% 50%;
+  transition: transform 0.7s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+canvas#overlayCanvas.meter-shift { transform: translateY(-23vh) scale(0.5); }
+#applauseSection .btn-row .small-action { white-space: nowrap; }

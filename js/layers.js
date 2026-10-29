@@ -572,22 +572,30 @@ class LayerManager {
   _bindPointer() {
     const el = this.canvas;
     el.style.touchAction = 'none';
+    // pointer → canvas coordinates. The canvas may be CSS-transformed (the applause meter
+    // shifts the whole composition up), so map through its on-screen rectangle.
+    const local = (e) => {
+      const r = el.getBoundingClientRect();
+      const kx = r.width ? window.innerWidth / r.width : 1, ky = r.height ? window.innerHeight / r.height : 1;
+      return { x: (e.clientX - r.left) * kx, y: (e.clientY - r.top) * ky };
+    };
 
     el.addEventListener('pointerdown', (e) => {
-      const hit = this.hitTest(e.clientX, e.clientY);
+      const pt = local(e);
+      const hit = this.hitTest(pt.x, pt.y);
       if (this.cutMode) {
         // cut mode: clicks remove regions instead of selecting / dragging
         const target = (hit && hit === this.selected) ? hit : (hit || null);
         if (target) {
           if (target !== this.selected) this.select(target);
-          const p = this.toSourcePoint(target, e.clientX, e.clientY);
+          const p = this.toSourcePoint(target, pt.x, pt.y);
           if (p && this.onCutClick) this.onCutClick(target, p.x, p.y);
         }
         return;
       }
       if (hit) {
         this.select(hit);
-        this.drag = { layer: hit, ox: e.clientX - hit.x, oy: e.clientY - hit.y };
+        this.drag = { layer: hit, ox: pt.x - hit.x, oy: pt.y - hit.y };
         el.setPointerCapture(e.pointerId);
       } else {
         if (this.selected) this.select(null);
@@ -603,8 +611,9 @@ class LayerManager {
     el.addEventListener('pointermove', (e) => {
       if (!this.drag) return;
       if (this.drag.layer) {
-        let nx = e.clientX - this.drag.ox;
-        let ny = e.clientY - this.drag.oy;
+        const pt = local(e);
+        let nx = pt.x - this.drag.ox;
+        let ny = pt.y - this.drag.oy;
         // magnetic snap to the screen center axes
         const SNAP = 12;
         this.snapX = Math.abs(nx - window.innerWidth / 2) < SNAP;
@@ -636,7 +645,8 @@ class LayerManager {
 
     el.addEventListener('wheel', (e) => {
       if (this.cutMode) return;
-      const hit = this.hitTest(e.clientX, e.clientY);
+      const pt = local(e);
+      const hit = this.hitTest(pt.x, pt.y);
       const target = hit || this.selected;
       if (!target) return;
       e.preventDefault();

@@ -7,6 +7,7 @@
 //   beat             1.0 on a detected kick onset, decaying back to 0 over ~0.3s
 //   music            0..1 confidence that the input is music rather than speech
 //   clip             true while the input is hitting the converter ceiling
+//   rms              raw loudness this tick, before adaptation (the applause meter's input)
 //   spectrum/wave    512-entry byte rows in Shadertoy's sound-texture layout
 //
 // Consumers: the CSS effects on the shader (applied here), the shader uniforms +
@@ -102,6 +103,8 @@ class AudioReactive {
     this._floor = [0, 0, 0, 0, 0];
     this.clip = false;
     this._clipUntil = 0;
+    this.rms = 0;                // raw RMS this tick, before room adaptation (applause meter)
+    this.peakSample = 0;         // raw sample peak this tick
 
     this.level = 0;
     this.bass = 0;
@@ -234,6 +237,7 @@ class AudioReactive {
     this.music = 0;
     this.gain = 1;
     this.clip = false;
+    this.rms = this.peakSample = 0;
     this.spectrum.fill(0);
     this.wave.fill(0);
     this.frame++;
@@ -311,6 +315,8 @@ class AudioReactive {
       if (av > pk) pk = av;
     }
     const rms = Math.sqrt(sum / this._time.length);
+    this.rms = rms;
+    this.peakSample = pk;
     if (pk > 0.985) this._clipUntil = now + 400;
     this.clip = now < this._clipUntil;
 

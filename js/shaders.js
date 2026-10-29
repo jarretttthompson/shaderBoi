@@ -746,5 +746,166 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord){
   col = pow(col, vec3(0.9));
   fragColor = vec4(col, 1.0);
 }`
+},
+{
+  id: 'builtin-pumpkin-moon',
+  name: 'Pumpkin Moon',
+  builtin: true,
+  code: `// Pumpkin Moon — Halloween. A harvest moon low in a bruised purple sky, bats crossing it,
+// a graveyard hill with a dead tree, and fog rolling through the stones. Audio-reactive:
+// the fog breathes with the bass, lightning flickers on beats, treble raises green wisps.
+// With the mic off it idles on a slow breath.
+// Inputs: iAudioLevel, iBass, iTreble, iBeat.
+float h11(float p){ return fract(sin(p * 127.1) * 43758.5453); }
+float h21(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+
+float vnoise(vec2 p){
+  vec2 i = floor(p), f = fract(p);
+  f = f*f*(3.0-2.0*f);
+  return mix(mix(h21(i), h21(i+vec2(1,0)), f.x),
+             mix(h21(i+vec2(0,1)), h21(i+vec2(1,1)), f.x), f.y);
+}
+
+float fbm(vec2 p){
+  float v = 0.0, a = 0.5;
+  for (int i = 0; i < 5; i++){ v += a*vnoise(p); p = p*2.03 + vec2(1.7, 9.2); a *= 0.5; }
+  return v;
+}
+
+// signed distance to a rounded box
+float sdBox(vec2 p, vec2 b, float r){
+  vec2 d = abs(p) - b + r;
+  return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0) - r;
+}
+// distance to a line segment
+float sdSeg(vec2 p, vec2 a, vec2 b){
+  vec2 pa = p - a, ba = b - a;
+  float h = clamp(dot(pa, ba)/dot(ba, ba), 0.0, 1.0);
+  return length(pa - ba*h);
+}
+
+// bat silhouette (1 inside): p centred on the bat, s = wingspan, flap -1..1
+float bat(vec2 p, float s, float flap){
+  p /= s;
+  float ax = abs(p.x);
+  float m = step(length(p*vec2(1.0, 1.5)), 0.085);                       // body
+  m = max(m, step(length((p - vec2(0.0, 0.08))*vec2(1.0, 1.2)), 0.055)); // head
+  // wings: a band between the leading edge (tilts with the flap) and a scalloped trailing edge
+  float lead  = 0.03 + flap*0.32*(ax - 0.05) - 0.10*(ax - 0.05)*(ax - 0.05);
+  float width = 0.14*(1.0 - ax*1.5) + 0.045*abs(sin(ax*21.0 + 1.6));
+  float wing = step(0.04, ax) * step(ax, 0.5) * step(p.y, lead) * step(lead - width, p.y);
+  return max(m, wing);
+}
+
+void mainImage(out vec4 fragColor, in vec2 fragCoord){
+  vec2 uv = (fragCoord - 0.5*iResolution.xy) / iResolution.y;   // y runs -0.5..0.5
+  float t = iTime;
+
+  // audio: blend an idle breath with the live signal
+  float live = clamp(iAudioLevel*3.0, 0.0, 1.0);
+  float idle = 0.5 + 0.5*sin(t*0.5);
+  float bass = mix(idle*0.4, iBass, live);
+  float treb = mix(0.0, iTreble, live);
+
+  // ---- sky ----
+  vec3 skyTop = vec3(0.035, 0.008, 0.075);
+  vec3 skyLow = vec3(0.26, 0.06, 0.34);
+  vec3 col = mix(skyLow, skyTop, smoothstep(-0.45, 0.5, uv.y));
+
+  // twinkling stars
+  vec2 sp = uv*140.0;
+  vec2 si = floor(sp);
+  float sh = h21(si);
+  vec2 so = (vec2(h21(si + 2.0), h21(si + 7.0)) - 0.5)*0.6;
+  float star = step(0.965, sh) * smoothstep(0.35, 0.0, length(fract(sp) - 0.5 - so));
+  star *= 0.5 + 0.5*sin(t*(1.0 + 3.0*h21(si + 11.0)) + sh*40.0);
+  col += vec3(0.9, 0.85, 1.0) * star * smoothstep(-0.1, 0.3, uv.y);
+
+  // ---- moon ----
+  vec2 mc = vec2(0.0, 0.10);
+  float R = 0.30;
+  float r = length(uv - mc);
+  float craters = fbm((uv - mc)*7.0 + 3.1);
+  vec3 moonCol = mix(vec3(1.0, 0.50, 0.08), vec3(1.0, 0.76, 0.30), smoothstep(0.35, 0.75, craters));
+  float limb = 1.0 - 0.35*smoothstep(0.55*R, R, r);          // darker toward the rim
+  float moon = 1.0 - smoothstep(R - 0.004, R + 0.004, r);
+  float halo = exp(-(r - R)*(6.0 - 2.0*bass)) * step(R, r);  // corona swells with the bass
+  col += vec3(1.0, 0.45, 0.10) * halo * (0.35 + 0.25*bass);
+  col = mix(col, moonCol*limb, moon);
+
+  // thin clouds drifting over the moon, lit from behind
+  float cl = fbm(vec2(uv.x*1.6 + t*0.025, uv.y*3.2 + 0.4*sin(t*0.05)));
+  float cloud = smoothstep(0.52, 0.74, cl) * smoothstep(-0.3, 0.1, uv.y) * (1.0 - smoothstep(0.35, 0.6, uv.y));
+  vec3 cloudCol = mix(vec3(0.08, 0.02, 0.12), vec3(0.65, 0.28, 0.10), clamp(moon*0.8 + halo*0.6, 0.0, 1.0));
+  col = mix(col, cloudCol, cloud*0.85);
+
+  // ---- bats crossing the moon ----
+  float bats = 0.0;
+  for (int i = 0; i < 7; i++){
+    float fi = float(i);
+    float spd = 0.045 + 0.02*h11(fi*3.3);
+    float x = fract(t*spd + h11(fi*7.7))*2.4 - 1.2;
+    float y = -0.02 + 0.33*h11(fi*5.1) + 0.05*sin(t*1.3 + fi*2.0);
+    float size = 0.045 + 0.05*h11(fi*9.9);
+    float flap = sin(t*(9.0 + 4.0*h11(fi*2.2)) + fi);
+    bats = max(bats, bat(uv - vec2(x, y), size, flap));
+  }
+  col = mix(col, vec3(0.015, 0.005, 0.02), bats);
+
+  // ---- lightning on beats ----
+  col += vec3(0.7, 0.55, 1.0) * iBeat * 0.3 * smoothstep(-0.4, 0.4, uv.y);
+
+  // ---- ground: hill, tombstones, dead tree ----
+  float hill = -0.30 + 0.05*fbm(vec2(uv.x*1.8 + 4.0, 2.0)) + 0.02*sin(uv.x*3.0);
+  float ground = 1.0 - smoothstep(hill - 0.004, hill + 0.004, uv.y);
+  float stones = 0.0;
+  stones = max(stones, step(sdBox(uv - vec2(-0.62, hill + 0.035), vec2(0.030, 0.045), 0.020), 0.0));
+  stones = max(stones, step(sdBox(uv - vec2(-0.44, hill + 0.030), vec2(0.028, 0.038), 0.025), 0.0));
+  stones = max(stones, step(sdBox(uv - vec2( 0.52, hill + 0.040), vec2(0.034, 0.050), 0.030), 0.0));
+  stones = max(stones, step(sdBox(uv - vec2( 0.70, hill + 0.030), vec2(0.026, 0.040), 0.012), 0.0));
+  stones = max(stones, step(sdBox(uv - vec2( 0.33, hill + 0.055), vec2(0.008, 0.060), 0.004), 0.0));  // cross
+  stones = max(stones, step(sdBox(uv - vec2( 0.33, hill + 0.085), vec2(0.030, 0.008), 0.004), 0.0));
+  // dead tree, swaying a touch: trunk thins toward the top, four bare branches
+  float sway = 0.006*sin(t*0.7);
+  vec2 tb = vec2(-0.78, hill - 0.02);
+  float up = smoothstep(0.0, 0.3, uv.y - hill);
+  float tree = sdSeg(uv, tb, tb + vec2(0.01 + sway, 0.30)) - (0.018 - 0.013*up);
+  tree = min(tree, sdSeg(uv, tb + vec2( 0.005, 0.17), tb + vec2(-0.09 + sway, 0.30)) - 0.007);
+  tree = min(tree, sdSeg(uv, tb + vec2( 0.008, 0.22), tb + vec2( 0.10 + sway, 0.33)) - 0.006);
+  tree = min(tree, sdSeg(uv, tb + vec2(-0.045, 0.235), tb + vec2(-0.10 + sway, 0.36)) - 0.004);
+  tree = min(tree, sdSeg(uv, tb + vec2( 0.050, 0.275), tb + vec2( 0.03 + sway, 0.40)) - 0.004);
+  float treeM = 1.0 - smoothstep(0.0, 0.003, tree);
+  vec3 dark = vec3(0.015, 0.005, 0.02);
+  col = mix(col, dark, max(max(ground, stones), treeM));
+
+  // glowing eyes in the grass (they blink now and then)
+  for (int i = 0; i < 2; i++){
+    float fi = float(i);
+    vec2 ec = vec2(-0.2 + 0.55*fi, hill - 0.05 - 0.02*fi);
+    float blink = smoothstep(0.08, 0.14, abs(fract(t*0.23 + fi*0.41) - 0.5));
+    vec2 d1 = uv - ec - vec2(0.011, 0.0), d2 = uv - ec + vec2(0.011, 0.0);
+    float eye = exp(-dot(d1, d1)*18000.0) + exp(-dot(d2, d2)*18000.0);
+    col += vec3(1.0, 0.55, 0.1) * eye * blink * 1.2;
+  }
+
+  // ---- fog rolling through the stones (breathes with the bass) ----
+  float fogN = fbm(vec2(uv.x*2.6 + t*0.09, uv.y*7.0 - t*0.03)) * 0.65
+             + fbm(vec2(uv.x*5.0 - t*0.14, uv.y*11.0 + t*0.02)) * 0.35;
+  float band = smoothstep(hill - 0.08, hill + 0.02, uv.y) * (1.0 - smoothstep(hill + 0.04, hill + 0.22 + 0.10*bass, uv.y));
+  float fog = band * smoothstep(0.25, 0.75, fogN) * (0.55 + 0.55*bass);
+  vec3 fogCol = vec3(0.50, 0.72, 0.52);
+  col = mix(col, fogCol*0.55, fog);
+  col += fogCol * fog * 0.15;
+
+  // treble wisps: green sparks over the fog
+  float wispBand = smoothstep(hill - 0.1, hill + 0.3, uv.y) * (1.0 - smoothstep(hill + 0.3, hill + 0.5, uv.y));
+  float sparks = pow(vnoise(uv*70.0 + vec2(t*2.5, -t*1.5)), 10.0) * treb * 1.6 * wispBand;
+  col += vec3(0.55, 1.0, 0.45) * sparks;
+
+  // vignette + gamma
+  col *= 1.0 - 0.35*smoothstep(0.45, 1.0, length(uv*vec2(0.85, 1.25)));
+  col = pow(max(col, 0.0), vec3(0.95));
+  fragColor = vec4(col, 1.0);
+}`
 }
 ];

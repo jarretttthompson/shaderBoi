@@ -258,6 +258,13 @@
     // render while anything moves, plus one more frame to clear when it stops
     if (animating || overlayAnimating) layerMgr.render();
     overlayAnimating = animating;
+
+    // applause-o-meter: drawn per frame; measured on the analyser's ticks (see audio.onLevel),
+    // or here while the mic is off so its followers settle to zero
+    if (meter.on) {
+      if (!audio.enabled) meter.tick(now);
+      meter.draw(now);
+    }
   };
 
   // ---------- audio overlays (drawn under the logos) ----------
@@ -358,6 +365,7 @@
         focus: Math.round(audio.musicFocus * 100),
         smooth: Math.round(audio.smooth * 100),
       },
+      applause: meter.settings(),
       layers,
     };
   }
@@ -424,6 +432,11 @@
       audio._applyComposite();
       saveAudioSettings(audio.enabled);
       syncAudioUI();
+    }
+    if (scene.applause) {
+      meter.applySettings(scene.applause);
+      saveApplauseSettings();
+      syncApplauseUI();
     }
     layerMgr.select(null);
     layerMgr.persistSoon();
@@ -914,6 +927,73 @@
     navigator.mediaDevices.addEventListener('devicechange', refreshDevices);
   }
 
+  // ---------- applause-o-meter (crowd meter for contests) ----------
+  const meter = new ApplauseMeter($('meterCanvas'), audio);
+  window.applauseMeter = meter;
+  const LS_APPLAUSE = 'shaderdeck.applause';
+
+  function loadApplauseSettings() {
+    try { meter.applySettings(JSON.parse(localStorage.getItem(LS_APPLAUSE) || '{}')); } catch {}
+  }
+  function saveApplauseSettings() {
+    localStorage.setItem(LS_APPLAUSE, JSON.stringify(meter.settings()));
+  }
+  function applauseState() {
+    return {
+      on: meter.on, range: meter.range, roundSec: meter.roundSec, theme: meter.theme,
+      measuring: meter.measuring, locked: meter.locked, score: meter.score, best: meter.best,
+      count: meter.rounds.length, rounds: meter.rounds.slice(-12),
+    };
+  }
+  function syncApplauseUI() {
+    const on = meter.on;
+    $('applauseBtn').classList.toggle('live', on);
+    $('applauseBtnLabel').textContent = on ? 'METER ON' : 'APPLAUSE';
+    $('applauseToggleBtn').textContent = on ? 'METER ON — SHOWING (A)' : 'METER OFF (A)';
+    $('applauseToggleBtn').classList.toggle('on', on);
+    $('applauseMeasureBtn').disabled = !on || meter.measuring;
+    $('applauseMeasureBtn').textContent = meter.measuring ? 'MEASURING…' : 'MEASURE (M)';
+    $('applauseClearBtn').disabled = !(meter.rounds.length || meter.round);
+    $('applauseRange').value = meter.range;
+    $('applauseRangeVal').textContent = meter.range;
+    $('applauseRound').value = meter.roundSec;
+    $('applauseRoundVal').textContent = meter.roundSec + 's';
+    // the logo composition rides up to make room for the meter (display only)
+    $('overlayCanvas').classList.toggle('meter-shift', on);
+    broadcastState();
+  }
+  async function setApplause(on) {
+    on = !!on;
+    if (on === meter.on) return;
+    if (on && !audio.enabled) await setAudio(true);   // the meter needs the mic
+    meter.setOn(on);
+  }
+  function applauseMeasure() {
+    if (meter.on) meter.startRound(performance.now());
+  }
+  function applauseClear() {
+    meter.clearContest();
+  }
+  meter.onChange = syncApplauseUI;
+  $('applauseBtn').addEventListener('click', () => setApplause(!meter.on));
+  $('applauseToggleBtn').addEventListener('click', () => setApplause(!meter.on));
+  $('applauseMeasureBtn').addEventListener('click', applauseMeasure);
+  $('applauseClearBtn').addEventListener('click', () => {
+    if (confirm('Forget every score and start a new contest?')) applauseClear();
+  });
+  $('applauseRange').addEventListener('input', () => {
+    meter.range = parseInt($('applauseRange').value, 10);
+    $('applauseRangeVal').textContent = meter.range;
+    saveApplauseSettings();
+    broadcastState();
+  });
+  $('applauseRound').addEventListener('input', () => {
+    meter.roundSec = parseInt($('applauseRound').value, 10);
+    $('applauseRoundVal').textContent = meter.roundSec + 's';
+    saveApplauseSettings();
+    broadcastState();
+  });
+
   // ---------- keep the display awake (no screensaver/sleep during shows) ----------
   let wakeLock = null;
   async function acquireWakeLock() {
@@ -1019,6 +1099,7 @@
         recording: audio.recording,
       },
       fxDefs: FX_DEFS.map(d => ({ key: d.key, label: d.label, group: d.group })),
+      applause: applauseState(),
     });
   }
 
@@ -1073,6 +1154,25 @@
       case 'stage':
         setStage(m.on);
         break;
+      case 'applause':
+        await setApplause(m.on);
+        break;
+      case 'applauseMeasure':
+        applauseMeasure();
+        break;
+      case 'applauseClear':
+        applauseClear();
+        break;
+      case 'applauseRange':
+        meter.range = Math.max(0, Math.min(100, parseInt(m.value, 10) || 0));
+        saveApplauseSettings();
+        syncApplauseUI();
+        break;
+      case 'applauseRound':
+        meter.roundSec = Math.max(3, Math.min(12, parseInt(m.value, 10) || 6));
+        saveApplauseSettings();
+        syncApplauseUI();
+        break;
     }
   };
 
@@ -1080,6 +1180,7 @@
   let lastLevelSent = 0, lastMeterAt = 0;
   audio.onLevel = () => {
     const now = performance.now();
+    if (meter.on) meter.tick(now);   // the applause meter measures at the analysis rate
     // meters at ~30 fps is plenty for DOM writes; the effects themselves run per frame
     if (now - lastMeterAt > 30) { lastMeterAt = now; setMeters(); }
     if (now - lastLevelSent > 100) {
@@ -1088,6 +1189,7 @@
         type: 'level',
         v: Math.min(1, audio.level), b: audio.bass, m: audio.mid, t: audio.treble, beat: audio.beat,
         music: audio.music, clip: audio.clip,
+        ap: meter.on ? { score: meter.score, measuring: meter.measuring, remaining: meter.remaining, locked: meter.locked } : null,
       });
     }
   };
@@ -1434,6 +1536,11 @@
       setStage(!inStage());
       return;
     }
+    if (!e.metaKey && !e.ctrlKey && !e.altKey) {
+      if (e.key === 'a' || e.key === 'A') { setApplause(!meter.on); return; }
+      if (e.key === 'm' || e.key === 'M') { applauseMeasure(); return; }
+      if ((e.key === 'c' || e.key === 'C') && meter.on) { applauseClear(); return; }
+    }
     if ((e.key === 'Delete' || e.key === 'Backspace') && sel()) {
       e.preventDefault();
       layerMgr.remove(sel());
@@ -1446,7 +1553,7 @@
   });
 
   // small scripting surface (console / automation)
-  window.shaderBoi = { serializeScene, importScene, savePreset, loadPresets, activateShader };
+  window.shaderBoi = { serializeScene, importScene, savePreset, loadPresets, activateShader, setApplause, applauseMeasure, applauseClear };
 
   // ---------- boot ----------
   renderShaderList();
@@ -1470,6 +1577,8 @@
     refreshDevices();
     if (s.on) setAudio(true, { silent: true });
   }
+  loadApplauseSettings();
+  syncApplauseUI();
 
   (async () => {
     await layerMgr.restore();          // bring back layers from the previous session

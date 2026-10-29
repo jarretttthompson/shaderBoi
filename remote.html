@@ -155,6 +155,12 @@ button.recording { color: var(--acc); border-color: var(--acc); background: var(
 .fx-row input[type=range] { flex: none; width: 90px; }
 .fx-row .val { width: 3.4em; }
 .fx-row.off input[type=range], .fx-row.off .val { opacity: 0.35; }
+.ap-score {
+  font-size: 2.6rem; font-weight: 700; text-align: center; letter-spacing: 0.08em;
+  text-shadow: 0 0 14px rgba(0,255,0,0.5); margin: 0.2rem 0 0;
+}
+.ap-sub { text-align: center; font-size: 0.6rem; color: var(--text-dim); letter-spacing: 0.16em; min-height: 1em; margin-bottom: 0.6rem; }
+.ap-rounds { font-size: 0.62rem; color: var(--text-dim); text-align: center; letter-spacing: 0.08em; margin-top: 0.3rem; min-height: 1em; }
 #waiting {
   font-size: 0.66rem;
   color: var(--text-dim);
@@ -178,6 +184,26 @@ button.recording { color: var(--acc); border-color: var(--acc); background: var(
     <button id="playBtn">PAUSE</button>
     <button id="stageToggleBtn">STAGE OFF</button>
   </div>
+
+  <div class="section">APPLAUSE-O-METER</div>
+  <div class="ap-score" id="apScore">&mdash;</div>
+  <div class="ap-sub" id="apSub">METER OFF</div>
+  <div class="row">
+    <button id="apToggleBtn" title="Show the crowd meter on the display (turns the mic on)">METER OFF</button>
+    <button id="apMeasureBtn" disabled title="Timed round: the loudest moment locks in as the score">MEASURE</button>
+  </div>
+  <div class="row"><button id="apClearBtn" disabled title="Forget every score">NEW CONTEST</button></div>
+  <div class="row" title="How loud the room must be to read 100 (higher = easier)">
+    <label>RANGE</label>
+    <input type="range" id="apRange" min="0" max="100" value="50">
+    <span class="val" id="apRangeVal">50</span>
+  </div>
+  <div class="row" title="How long MEASURE listens">
+    <label>ROUND</label>
+    <input type="range" id="apRound" min="3" max="12" value="6">
+    <span class="val" id="apRoundVal">6s</span>
+  </div>
+  <div class="ap-rounds" id="apRounds"></div>
 
   <div class="section">SHADERS</div>
   <ul id="shaders"></ul>
@@ -229,6 +255,8 @@ button.recording { color: var(--acc); border-color: var(--acc); background: var(
   let sensDragging = false;
   let focusDragging = false;
   let smoothDragging = false;
+  let apRangeDragging = false;
+  let apRoundDragging = false;
 
   const send = (msg) => ch.postMessage(msg);
 
@@ -260,6 +288,7 @@ button.recording { color: var(--acc); border-color: var(--acc); background: var(
     $('recordBtn').classList.toggle('recording', !!state.audio.recording);
     $('recordBtn').disabled = !(state.audio.on && state.audio.source === 'mic');
     renderFx(state);
+    renderApplause(state.applause || {});
 
     const ul = $('shaders');
     ul.innerHTML = '';
@@ -279,6 +308,23 @@ button.recording { color: var(--acc); border-color: var(--acc); background: var(
       li.addEventListener('click', () => send({ cmd: 'preset', file: p.file }));
       pl.appendChild(li);
     }
+  }
+
+  function renderApplause(ap) {
+    $('apToggleBtn').textContent = ap.on ? 'METER ON' : 'METER OFF';
+    $('apToggleBtn').classList.toggle('on', !!ap.on);
+    $('apMeasureBtn').disabled = !ap.on || !!ap.measuring;
+    $('apMeasureBtn').textContent = ap.measuring ? 'MEASURING…' : 'MEASURE';
+    $('apClearBtn').disabled = !(ap.count || ap.measuring || ap.locked);
+    if (!apRangeDragging) { $('apRange').value = ap.range ?? 50; $('apRangeVal').textContent = ap.range ?? 50; }
+    if (!apRoundDragging) { $('apRound').value = ap.roundSec ?? 6; $('apRoundVal').textContent = (ap.roundSec ?? 6) + 's'; }
+    const rounds = ap.rounds || [], off = (ap.count || rounds.length) - rounds.length;
+    $('apRounds').textContent = rounds.map((s, i) => '#' + (off + i + 1) + ' ' + s).join('   ');
+    if (!ap.on) { $('apScore').textContent = '—'; $('apSub').textContent = 'METER OFF'; return; }
+    $('apScore').textContent = ap.score ?? 0;
+    if (ap.measuring) $('apSub').textContent = 'MEASURING';
+    else if (ap.locked) $('apSub').textContent = 'LOCKED' + (ap.best ? '  ·  HIGH ' + ap.best : '');
+    else $('apSub').textContent = ap.best ? 'LIVE  ·  TO BEAT ' + ap.best : 'LIVE';
   }
 
   // effect rows are built once per definition set and then updated in place, so a
@@ -351,8 +397,28 @@ button.recording { color: var(--acc); border-color: var(--acc); background: var(
       $('beatDot').classList.toggle('hit', (m.beat || 0) > 0.5);
       $('mMusic').style.width = pct(m.music);
       $('clipBadge').classList.toggle('hit', !!m.clip);
+      if (m.ap) {
+        $('apScore').textContent = m.ap.score;
+        if (m.ap.measuring) $('apSub').textContent = 'MAKE SOME NOISE  ' + Number(m.ap.remaining || 0).toFixed(1) + 's';
+      }
     }
   };
+
+  $('apToggleBtn').addEventListener('click', () => send({ cmd: 'applause', on: !(state && state.applause && state.applause.on) }));
+  $('apMeasureBtn').addEventListener('click', () => send({ cmd: 'applauseMeasure' }));
+  $('apClearBtn').addEventListener('click', () => { if (confirm('Forget every score and start a new contest?')) send({ cmd: 'applauseClear' }); });
+  $('apRange').addEventListener('pointerdown', () => { apRangeDragging = true; });
+  $('apRange').addEventListener('pointerup', () => { apRangeDragging = false; });
+  $('apRange').addEventListener('input', () => {
+    $('apRangeVal').textContent = $('apRange').value;
+    send({ cmd: 'applauseRange', value: parseInt($('apRange').value, 10) });
+  });
+  $('apRound').addEventListener('pointerdown', () => { apRoundDragging = true; });
+  $('apRound').addEventListener('pointerup', () => { apRoundDragging = false; });
+  $('apRound').addEventListener('input', () => {
+    $('apRoundVal').textContent = $('apRound').value + 's';
+    send({ cmd: 'applauseRound', value: parseInt($('apRound').value, 10) });
+  });
 
   $('adaptBtn').addEventListener('click', () => send({ cmd: 'adapt', on: !(state && state.audio.adapt !== false) }));
   $('recordBtn').addEventListener('click', () => send({ cmd: 'record' }));

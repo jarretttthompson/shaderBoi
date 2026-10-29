@@ -17,6 +17,8 @@
   </div>
   <canvas id="overlayCanvas"></canvas>
 </div>
+<!-- applause-o-meter: drawn above the composition, outside the zoom/shake wrap -->
+<canvas id="meterCanvas" class="meter-canvas hidden"></canvas>
 
 <div id="stageHint" class="stage-hint hidden">ESC / H — SHOW CONTROLS</div>
 
@@ -47,6 +49,13 @@
       </svg><span id="audioBtnLabel">OFF</span>
     </button>
     <input type="range" id="audioSens" class="audio-sens hidden" min="1" max="30" value="10" title="Audio sensitivity">
+    <button id="applauseBtn" class="tb-btn icon-btn" title="Applause-o-meter: a big crowd-loudness meter for contests (A). MEASURE (M) runs a timed round and locks in the score.">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+        <path d="M4 17a8 8 0 0 1 16 0"/>
+        <line x1="12" y1="17" x2="16.5" y2="11"/>
+        <line x1="3" y1="20.5" x2="21" y2="20.5"/>
+      </svg><span id="applauseBtnLabel">APPLAUSE</span>
+    </button>
     <button id="playPauseBtn" class="tb-btn icon-btn" title="Play / pause shader time">
       <svg id="pauseIcon" class="icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
         <rect x="6" y="4" width="4" height="16"/>
@@ -91,6 +100,26 @@
       <ul id="presetList" class="shader-list"></ul>
       <div id="presetEmpty" class="empty-msg hidden">No presets yet.</div>
       <button id="savePresetBtn" class="small-action full" title="Save the current shader, layers and audio settings as a named preset in the site's presets folder">SAVE AS PRESET</button>
+    </div>
+
+    <div id="applauseSection">
+      <div class="ctl-divider">APPLAUSE-O-METER</div>
+      <div class="ctl-group">
+        <button id="applauseToggleBtn" class="small-action full" title="Show the big crowd-loudness meter on the display (A). Turns the mic on if it is off.">METER OFF (A)</button>
+      </div>
+      <div class="ctl-group btn-row">
+        <button id="applauseMeasureBtn" class="small-action" disabled title="Run a timed round: the loudest moment locks in as this contestant's score (M)">MEASURE (M)</button>
+        <button id="applauseClearBtn" class="small-action danger" disabled title="Forget every score and the mark to beat (C)">NEW CONTEST</button>
+      </div>
+      <div class="ctl-group" title="How loud the room must be to read 100. Higher = easier. Set it at soundcheck so a big cheer just reaches 100, then leave it alone for the whole contest.">
+        <label>RANGE <span id="applauseRangeVal" class="val">50</span></label>
+        <input type="range" id="applauseRange" min="0" max="100" value="50">
+      </div>
+      <div class="ctl-group" title="How long MEASURE listens before the score locks">
+        <label>ROUND <span id="applauseRoundVal" class="val">6s</span></label>
+        <input type="range" id="applauseRound" min="3" max="12" value="6">
+      </div>
+      <div class="hint">Raw mic loudness on a fixed scale, so every contestant is judged the same (ROOM ADAPT and MUSIC FOCUS do not apply). Set the Mac's mic mode to <b>Standard</b>, never Voice Isolation, and pause the music while measuring.</div>
     </div>
 
     <div id="audioSection">
@@ -260,6 +289,7 @@
 
 <script src="js/shaders.js"></script>
 <script src="js/audio.js"></script>
+<script src="js/applause.js"></script>
 <script src="js/shader-engine.js"></script>
 <script src="js/vectorize.js"></script>
 <script src="js/persist.js"></script>

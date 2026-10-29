@@ -31,6 +31,9 @@ server, though any static server technically works.
   **Honky-Tonk Beams** (smoky stage-light sweeps with dust), and **Amber Pulse** (audio-reactive:
   spectrum rings around a bass-driven ember core, beat flashes, treble sparks; idles on a slow
   breath when the mic is off).
+- **Pumpkin Moon** (Halloween, audio-reactive): a harvest moon in a purple sky with bats, a
+  graveyard hill, a dead tree and rolling fog. The fog breathes with the bass, beats flash
+  lightning, treble raises green wisps; it idles on a slow breath with the mic off.
 - Switching shaders **crossfades** over ~2s — both shaders render live during the blend,
   so changes are never abrupt on the bar display.
 - **+ ADD SHADER** → paste Shadertoy code (needs `mainImage(out vec4 fragColor, in vec2 fragCoord)`).
@@ -69,7 +72,8 @@ server, though any static server technically works.
   (images embedded), and audio sensitivity — as a single portable `.json` file. Send it to
   anyone; they load it with SCENE ⇧ or by dropping the file onto the page. Press **P** to
   save a PNG snapshot of the composition.
-- Space = play/pause shader time, Delete = remove selected layer.
+- Space = play/pause shader time, Delete = remove selected layer, **A** = applause-o-meter on/off,
+  **M** = measure a round, **C** = new contest (see [Applause-o-meter](#applause-o-meter)).
 
 ## Stage remote
 
@@ -92,7 +96,9 @@ or Safari 16.4+; the console logs "screen wake lock active" on success.)
 
 Scene files placed in `presets/` and listed in `presets/index.json` appear under **PRESETS**
 in the library panel — one click loads shader + layers + audio settings. Ships with
-**Southern Social** (the default on a first-ever boot with nothing saved) and **The High Road**.
+**Southern Social** (the default on a first-ever boot with nothing saved), **Southern Social —
+Halloween** (the same logo as a bone-white silhouette over Pumpkin Moon; carries the
+applause-o-meter settings) and **The High Road**.
 
 **SAVE AS PRESET** stores the current composition under a name you choose. Running from the
 local `serve.py` it writes `presets/<slug>.json` and updates `index.json` on the spot (the ✕ on a
@@ -101,6 +107,31 @@ site the button downloads the file instead, with instructions.
 
 The **search box** at the top of the library filters shaders and presets by name as you type;
 Enter loads the first match, Esc clears.
+
+## Applause-o-meter
+
+A crowd-loudness meter for contests (costume contest, dance-off). **APPLAUSE** in the top bar,
+**METER** in the library panel, the **A** key, or the stage remote shows it: the logo composition
+rides up to the top third of the screen and a big LED ladder with a huge score takes the lower
+half. Turning it on turns the mic on if it was off.
+
+- It reads the **raw** mic loudness, before ROOM ADAPT and MUSIC FOCUS, on a **fixed dB scale**, so
+  every contestant is judged the same however loud the night has been. **RANGE** sets how loud the
+  room must be to read 100 (higher = easier): at soundcheck, have a few people cheer and set it so
+  a big cheer just reaches 100, then leave it alone for the whole contest. The operator hint at the
+  bottom of the window (hidden in stage mode) shows the live level in dBFS and the current ceiling.
+- **MEASURE** (**M**) runs a timed round (**ROUND**, 3–12 s, default 6): the screen says MAKE SOME
+  NOISE with a countdown bar, the number climbs with the loudest moment so far, and at the end the
+  score **locks in**, joins the list along the bottom and becomes the mark **TO BEAT** on the
+  ladder. Beating it says NEW HIGH SCORE. Between rounds the ladder stays live with a peak hold.
+- **NEW CONTEST** (**C**) forgets every score. Turning the meter off keeps them.
+- Peaks are taken from a 120 ms follower, so one clap right next to the laptop does not win.
+- RANGE and ROUND persist, and travel in scene files / presets (`applause` block).
+
+Using the MacBook as the microphone works if the Mac sits where it hears the crowd and not inside
+a speaker's throw: pause the music while measuring (a playing PA reads as applause), set the
+mic mode in Control Center to **Standard** (Voice Isolation strips crowd noise), and if CLIP lights
+during cheers lower the input volume in System Settings → Sound → Input or raise RANGE.
 
 ## Audio react
 
@@ -193,8 +224,10 @@ stage mode. Deleting a layer removes it from storage too.
 For running as a background visualizer (bar/venue): **⛶ STAGE** (top right) goes fullscreen and
 hides every control — just the shader and your logos. The cursor auto-hides after a couple of
 seconds. Press **Esc** or **H** to bring the controls back; **H** also toggles stage mode without
-touching your layout. Set **RES HD** before going on stage if the display is high-DPI and the
-machine can keep up; drop to **RES ½×** if the shader is heavy for the hardware.
+touching your layout. **A**, **M** and **C** keep working in stage mode, so a costume contest can
+be run from the keyboard with nothing on screen but the show. Set **RES HD** before going on stage
+if the display is high-DPI and the machine can keep up; drop to **RES ½×** if the shader is heavy
+for the hardware.
 
 ## Files
 
