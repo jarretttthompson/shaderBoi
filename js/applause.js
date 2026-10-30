@@ -38,7 +38,6 @@ class ApplauseMeter {
     this.roundSec = 6;      // seconds a MEASURE round listens before the score locks
     this.headroom = 12;     // dB above the RANGE ceiling that still raise the score, compressed (0 = hard top)
     this.theme = 'halloween';
-    this.position = 'top';  // 'top': meter in the upper half, logo below (clears a drum kit in front of the screen); 'bottom': the reverse
     this.live = 0;          // bar level 0..1 (fast attack, moderate release)
     this.slow = 0;          // ~120 ms follower the peaks are taken from (ignores one-frame spikes)
     this.hold = 0;          // idle peak hold
@@ -83,14 +82,13 @@ class ApplauseMeter {
   }
   get remaining() { return this.measuring ? Math.max(0, (this.round.end - performance.now()) / 1000) : 0; }
 
-  settings() { return { range: this.range, roundSec: this.roundSec, headroom: this.headroom, position: this.position, theme: this.theme }; }
+  settings() { return { range: this.range, roundSec: this.roundSec, headroom: this.headroom, theme: this.theme }; }
   applySettings(s) {
     if (!s) return;
     if (Number.isFinite(s.range)) this.range = Math.max(0, Math.min(100, Math.round(s.range)));
     if (Number.isFinite(s.roundSec)) this.roundSec = Math.max(3, Math.min(12, Math.round(s.roundSec)));
     if (Number.isFinite(s.headroom)) this.headroom = Math.max(0, Math.min(30, Math.round(s.headroom)));
     if (typeof s.theme === 'string' && ApplauseMeter.THEMES[s.theme]) this.theme = s.theme;
-    if (s.position === 'top' || s.position === 'bottom') this.position = s.position;
   }
 
   setOn(on) {
@@ -184,19 +182,16 @@ class ApplauseMeter {
     const r = this.round;
     const measuring = !!(r && !r.locked), locked = !!(r && r.locked);
 
-    // vertical layout: the meter owns the upper half (logo lowered) or the lower half (logo lifted)
-    const top = this.position !== 'bottom';
-    const Y = top
-      ? { fade0: 0.60, fade1: 0.38, title: 0.085, score: 0.205, status: 0.305, ladder: 0.34, rounds: 0.495 }
-      : { fade0: 0.44, fade1: 0.66, title: 0.535, score: 0.655, status: 0.755, ladder: 0.79, rounds: 0.945 };
+    // vertical layout: the meter owns the upper half of the display (app.js shrinks the logo
+    // composition into the lower half), so a drum kit in front of the screen hides nothing
+    const Y = { fade0: 0.60, fade1: 0.38, title: 0.085, score: 0.205, status: 0.305, ladder: 0.34, rounds: 0.495 };
 
     // a soft dark band behind the meter so it reads on bright shaders
     const band = ctx.createLinearGradient(0, H * Y.fade0, 0, H * Y.fade1);
     band.addColorStop(0, 'rgba(0, 0, 0, 0)');
     band.addColorStop(1, 'rgba(0, 0, 0, 0.42)');
     ctx.fillStyle = band;
-    if (top) ctx.fillRect(0, 0, W, H * Y.fade0);
-    else ctx.fillRect(0, H * Y.fade0, W, H * (1 - Y.fade0));
+    ctx.fillRect(0, 0, W, H * Y.fade0);
 
     // title
     ctx.textAlign = 'center';

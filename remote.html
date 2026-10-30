@@ -193,7 +193,6 @@ button.recording { color: var(--acc); border-color: var(--acc); background: var(
     <button id="apMeasureBtn" disabled title="Timed round: the loudest moment locks in as the score">MEASURE</button>
   </div>
   <div class="row"><button id="apClearBtn" disabled title="Forget every score">NEW CONTEST</button></div>
-  <div class="row"><button id="apPosBtn" title="Meter in the upper half with the logo below, or the lower half with the logo above">METER AT TOP</button></div>
   <div class="row" title="How loud the room must be to reach the top of the scale (higher = easier)">
     <label>RANGE</label>
     <input type="range" id="apRange" min="0" max="100" value="50">
@@ -323,7 +322,6 @@ button.recording { color: var(--acc); border-color: var(--acc); background: var(
     $('apMeasureBtn').disabled = !ap.on || !!ap.measuring;
     $('apMeasureBtn').textContent = ap.measuring ? 'MEASURING…' : 'MEASURE';
     $('apClearBtn').disabled = !(ap.count || ap.measuring || ap.locked);
-    $('apPosBtn').textContent = ap.position === 'bottom' ? 'METER AT BOTTOM' : 'METER AT TOP';
     if (!apRangeDragging) { $('apRange').value = ap.range ?? 50; $('apRangeVal').textContent = ap.range ?? 50; }
     if (!apRoundDragging) { $('apRound').value = ap.roundSec ?? 6; $('apRoundVal').textContent = (ap.roundSec ?? 6) + 's'; }
     if (!apHeadroomDragging) { $('apHeadroom').value = ap.headroom ?? 12; $('apHeadroomVal').textContent = '+' + (ap.headroom ?? 12); }
@@ -416,7 +414,6 @@ button.recording { color: var(--acc); border-color: var(--acc); background: var(
   $('apToggleBtn').addEventListener('click', () => send({ cmd: 'applause', on: !(state && state.applause && state.applause.on) }));
   $('apMeasureBtn').addEventListener('click', () => send({ cmd: 'applauseMeasure' }));
   $('apClearBtn').addEventListener('click', () => { if (confirm('Forget every score and start a new contest?')) send({ cmd: 'applauseClear' }); });
-  $('apPosBtn').addEventListener('click', () => send({ cmd: 'applausePosition', value: (state && state.applause && state.applause.position) === 'bottom' ? 'top' : 'bottom' }));
   $('apRange').addEventListener('pointerdown', () => { apRangeDragging = true; });
   $('apRange').addEventListener('pointerup', () => { apRangeDragging = false; });
   $('apRange').addEventListener('input', () => {

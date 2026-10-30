@@ -719,12 +719,11 @@ input[type=color] {
   z-index: 3;
   pointer-events: none;
 }
-/* while the meter shows, the logo composition rides up to make room (display only; the
-   saved layout is untouched — pointer hit-testing maps through the transform) */
+/* while the meter shows, the logo composition shrinks into the lower half under it (display
+   only; the saved layout is untouched — pointer hit-testing maps through the transform) */
 canvas#overlayCanvas {
   transform-origin: 50% 50%;
   transition: transform 0.7s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
-canvas#overlayCanvas.meter-shift { transform: translateY(-23vh) scale(0.5); }
-canvas#overlayCanvas.meter-shift.logo-low { transform: translateY(24vh) scale(0.5); }   /* meter at the top */
+canvas#overlayCanvas.meter-shift { transform: translateY(24vh) scale(0.5); }   /* the logo drops under the meter */
 #applauseSection .btn-row .small-action { white-space: nowrap; }
