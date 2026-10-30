@@ -38,6 +38,7 @@ class ApplauseMeter {
     this.roundSec = 6;      // seconds a MEASURE round listens before the score locks
     this.headroom = 12;     // dB above the RANGE ceiling that still raise the score, compressed (0 = hard top)
     this.theme = 'halloween';
+    this.position = 'top';  // 'top': meter in the upper half, logo below (clears a drum kit in front of the screen); 'bottom': the reverse
     this.live = 0;          // bar level 0..1 (fast attack, moderate release)
     this.slow = 0;          // ~120 ms follower the peaks are taken from (ignores one-frame spikes)
     this.hold = 0;          // idle peak hold
@@ -82,13 +83,14 @@ class ApplauseMeter {
   }
   get remaining() { return this.measuring ? Math.max(0, (this.round.end - performance.now()) / 1000) : 0; }
 
-  settings() { return { range: this.range, roundSec: this.roundSec, headroom: this.headroom, theme: this.theme }; }
+  settings() { return { range: this.range, roundSec: this.roundSec, headroom: this.headroom, position: this.position, theme: this.theme }; }
   applySettings(s) {
     if (!s) return;
     if (Number.isFinite(s.range)) this.range = Math.max(0, Math.min(100, Math.round(s.range)));
     if (Number.isFinite(s.roundSec)) this.roundSec = Math.max(3, Math.min(12, Math.round(s.roundSec)));
     if (Number.isFinite(s.headroom)) this.headroom = Math.max(0, Math.min(30, Math.round(s.headroom)));
     if (typeof s.theme === 'string' && ApplauseMeter.THEMES[s.theme]) this.theme = s.theme;
+    if (s.position === 'top' || s.position === 'bottom') this.position = s.position;
   }
 
   setOn(on) {
@@ -182,12 +184,19 @@ class ApplauseMeter {
     const r = this.round;
     const measuring = !!(r && !r.locked), locked = !!(r && r.locked);
 
+    // vertical layout: the meter owns the upper half (logo lowered) or the lower half (logo lifted)
+    const top = this.position !== 'bottom';
+    const Y = top
+      ? { fade0: 0.60, fade1: 0.38, title: 0.085, score: 0.205, status: 0.305, ladder: 0.34, rounds: 0.495 }
+      : { fade0: 0.44, fade1: 0.66, title: 0.535, score: 0.655, status: 0.755, ladder: 0.79, rounds: 0.945 };
+
     // a soft dark band behind the meter so it reads on bright shaders
-    const band = ctx.createLinearGradient(0, H * 0.44, 0, H * 0.66);
+    const band = ctx.createLinearGradient(0, H * Y.fade0, 0, H * Y.fade1);
     band.addColorStop(0, 'rgba(0, 0, 0, 0)');
     band.addColorStop(1, 'rgba(0, 0, 0, 0.42)');
     ctx.fillStyle = band;
-    ctx.fillRect(0, H * 0.44, W, H * 0.56);
+    if (top) ctx.fillRect(0, 0, W, H * Y.fade0);
+    else ctx.fillRect(0, H * Y.fade0, W, H * (1 - Y.fade0));
 
     // title
     ctx.textAlign = 'center';
@@ -196,7 +205,7 @@ class ApplauseMeter {
     ctx.fillStyle = T.title;
     ctx.shadowColor = T.glow;
     ctx.shadowBlur = 24 * u;
-    this._spaced(ctx, 'APPLAUSE-O-METER', W / 2, H * 0.535, 0.28);
+    this._spaced(ctx, 'APPLAUSE-O-METER', W / 2, H * Y.title, 0.28);
     ctx.shadowBlur = 0;
 
     // the score
@@ -207,7 +216,7 @@ class ApplauseMeter {
     ctx.fillStyle = scoreColor;
     ctx.shadowColor = scoreColor;
     ctx.shadowBlur = 40 * u;
-    ctx.fillText(String(this.score), W / 2, H * 0.655);
+    ctx.fillText(String(this.score), W / 2, H * Y.score);
     ctx.shadowBlur = 0;
 
     // status line under the score
@@ -219,11 +228,11 @@ class ApplauseMeter {
     if (status) {
       ctx.font = `700 ${Math.round(22 * u)}px ${mono}`;
       ctx.fillStyle = statusColor;
-      this._spaced(ctx, status, W / 2, H * 0.755, 0.22);
+      this._spaced(ctx, status, W / 2, H * Y.status, 0.22);
     }
 
     // LED ladder
-    const x0 = W * 0.08, x1 = W * 0.92, y = H * 0.79, h = H * 0.07;
+    const x0 = W * 0.08, x1 = W * 0.92, y = H * Y.ladder, h = H * 0.07;
     const N = 40, slot = (x1 - x0) / N, gap = slot * 0.28, segW = slot - gap;
     const rad = Math.min(6 * u, segW / 2);
     for (let i = 0; i < N; i++) {
@@ -307,7 +316,7 @@ class ApplauseMeter {
       ctx.font = `400 ${Math.round(20 * u)}px ${mono}`;
       const shown = this.rounds.slice(-10), off = this.rounds.length - shown.length;
       ctx.fillStyle = T.text;
-      ctx.fillText(shown.map((s, i) => '#' + (off + i + 1) + ' ' + s).join('     '), W / 2, H * 0.945);
+      ctx.fillText(shown.map((s, i) => '#' + (off + i + 1) + ' ' + s).join('     '), W / 2, H * Y.rounds);
     }
 
     // operator hints — never on the stage display

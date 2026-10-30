@@ -940,7 +940,7 @@
   }
   function applauseState() {
     return {
-      on: meter.on, range: meter.range, roundSec: meter.roundSec, headroom: meter.headroom, theme: meter.theme,
+      on: meter.on, range: meter.range, roundSec: meter.roundSec, headroom: meter.headroom, position: meter.position, theme: meter.theme,
       measuring: meter.measuring, locked: meter.locked, score: meter.score, best: meter.best,
       count: meter.rounds.length, rounds: meter.rounds.slice(-12),
     };
@@ -954,14 +954,17 @@
     $('applauseMeasureBtn').disabled = !on || meter.measuring;
     $('applauseMeasureBtn').textContent = meter.measuring ? 'MEASURING…' : 'MEASURE (M)';
     $('applauseClearBtn').disabled = !(meter.rounds.length || meter.round);
+    $('applausePosBtn').textContent = meter.position === 'bottom' ? 'METER AT BOTTOM' : 'METER AT TOP';
     $('applauseRange').value = meter.range;
     $('applauseRangeVal').textContent = meter.range;
     $('applauseHeadroom').value = meter.headroom;
     $('applauseHeadroomVal').textContent = '+' + meter.headroom + ' dB';
     $('applauseRound').value = meter.roundSec;
     $('applauseRoundVal').textContent = meter.roundSec + 's';
-    // the logo composition rides up to make room for the meter (display only)
+    // the logo composition shrinks out of the meter's half (display only): up when the meter is
+    // at the bottom, down when it is at the top
     $('overlayCanvas').classList.toggle('meter-shift', on);
+    $('overlayCanvas').classList.toggle('logo-low', on && meter.position !== 'bottom');
     broadcastState();
   }
   async function setApplause(on) {
@@ -982,6 +985,11 @@
   $('applauseMeasureBtn').addEventListener('click', applauseMeasure);
   $('applauseClearBtn').addEventListener('click', () => {
     if (confirm('Forget every score and start a new contest?')) applauseClear();
+  });
+  $('applausePosBtn').addEventListener('click', () => {
+    meter.position = meter.position === 'bottom' ? 'top' : 'bottom';
+    saveApplauseSettings();
+    syncApplauseUI();
   });
   $('applauseRange').addEventListener('input', () => {
     meter.range = parseInt($('applauseRange').value, 10);
@@ -1173,6 +1181,11 @@
         break;
       case 'applauseRange':
         meter.range = Math.max(0, Math.min(100, parseInt(m.value, 10) || 0));
+        saveApplauseSettings();
+        syncApplauseUI();
+        break;
+      case 'applausePosition':
+        meter.position = m.value === 'bottom' ? 'bottom' : 'top';
         saveApplauseSettings();
         syncApplauseUI();
         break;

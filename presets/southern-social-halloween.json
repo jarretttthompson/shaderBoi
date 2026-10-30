@@ -84,6 +84,7 @@
     "range": 50,
     "roundSec": 6,
     "headroom": 12,
+    "position": "top",
     "theme": "halloween"
   }
 }

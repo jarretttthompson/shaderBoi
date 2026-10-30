@@ -111,9 +111,11 @@ Enter loads the first match, Esc clears.
 ## Applause-o-meter
 
 A crowd-loudness meter for contests (costume contest, dance-off). **APPLAUSE** in the top bar,
-**METER** in the library panel, the **A** key, or the stage remote shows it: the logo composition
-rides up to the top third of the screen and a big LED ladder with a huge score takes the lower
-half. Turning it on turns the mic on if it was off.
+**METER** in the library panel, the **A** key, or the stage remote shows it: a big LED ladder with a
+huge score takes one half of the screen and the logo composition shrinks into the other. **METER AT
+TOP** (the default, so a drum kit in front of the screen hides nothing) puts the meter in the upper
+half with the logo below; **METER AT BOTTOM** is the reverse. Turning it on turns the mic on if it
+was off.
 
 - It reads the **raw** mic loudness **above 400 Hz**, before ROOM ADAPT and MUSIC FOCUS, on a
   **fixed dB scale**, so every contestant is judged the same however loud the night has been. The
@@ -137,7 +139,8 @@ half. Turning it on turns the mic on if it was off.
   ladder. Beating it says NEW HIGH SCORE. Between rounds the ladder stays live with a peak hold.
 - **NEW CONTEST** (**C**) forgets every score. Turning the meter off keeps them.
 - Peaks are taken from a 120 ms follower, so one clap right next to the laptop does not win.
-- RANGE and ROUND persist, and travel in scene files / presets (`applause` block).
+- RANGE, HEADROOM, ROUND and the meter position persist, and travel in scene files / presets
+  (`applause` block).
 
 Using the MacBook as the microphone works if the Mac sits where it hears the crowd and not inside
 a speaker's throw: pause the music while measuring (a playing PA reads as applause), set the
